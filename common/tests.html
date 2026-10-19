@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בדיקות: מפרש C#</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 16px; color: #1f2937; background: #f4f6f9; }
+  h1 { font-size: 20px; }
+  pre { background: #fff; border: 1px solid #d9dee6; border-radius: 8px; padding: 10px; direction: ltr; text-align: left; white-space: pre-wrap; font-size: 13px; }
+  .pass { color: #15803d; font-weight: bold; } .fail { color: #b42318; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>בדיקות המפרש (common/csharp.js)</h1>
+<div id="summary"></div>
+<pre id="log"></pre>
+
+<script src="csharp.js"></script>
+<script>
+(function () {
+  const lines = [], log = s => lines.push(s);
+  let pass = 0, fail = 0;
+  function ok(cond, msg) { if (cond) pass++; else { fail++; log('✗ ' + msg); } }
+  const eq = (got, want, msg) => ok(got === want, `${msg}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+  const { parseProgram, parseExpr, check, run, literal, str, ch, arr, CSError } = CS;
+
+  // מריץ ומחזיר ערך כ-literal, או "ERR:kind"
+  function res(src, name, args, opts) {
+    try { const r = run(parseProgram(src), name, args, opts); return { v: literal(r.value), out: r.out, r }; }
+    catch (e) { if (!(e instanceof CSError)) throw e; return { err: e.kind, msg: e.message, line: e.line, blank: e.blank }; }
+  }
+  const val = (src, name, args) => { const r = res(src, name, args); return r.err ? 'ERR:' + r.err + ': ' + r.msg : r.v; };
+  const out = (src, name, args) => { const r = res(src, name, args); return r.err ? 'ERR:' + r.err + ': ' + r.msg : r.out; };
+  const kind = (src, name = 'F', args = []) => res(src, name, args).err || 'ok';
+  // ביטוי בודד בתוך פעולה עם פרמטרים
+  const E = (expr, ret = 'int', params = '', args = []) => val(`static ${ret} F(${params}) { return ${expr}; }`, 'F', args);
+
+  // ---------- חשבון וטיפוסים ----------
+  eq(E('-7 / 2'), '-3', 'int division truncates toward zero');
+  eq(E('-7 % 2'), '-1', 'remainder takes the sign of the dividend');
+  eq(E('7 % -2'), '1', 'remainder 7 % -2');
+  eq(E('2147483647 + 1'), '-2147483648', 'int overflow wraps');
+  eq(E('46341 * 46341'), '-2147479015', 'multiplication overflow wraps');
+  eq(E('1 + 2 * 3 - 4 / 2'), '5', 'precedence');
+  eq(E('(1 + 2) * 3'), '9', 'parentheses');
+  eq(E('-(-5)'), '5', 'unary minus');
+  eq(E("'a' + 1"), '98', 'char + int is int');
+  eq(E("(char)('a' + 1)", 'char'), "'b'", 'cast to char');
+  eq(E("(int)'A'"), '65', 'cast char to int');
+  eq(E('"x" + \'a\'', 'string'), '"xa"', 'string + char concatenates');
+  eq(E('"n=" + 1 + 2', 'string'), '"n=12"', 'left-to-right string concat');
+  eq(E('1 + 2 + "n"', 'string'), '"3n"', 'numbers add before string');
+  eq(E('"b" + true', 'string'), '"bTrue"', 'bool prints as True');
+  eq(E('3 > 2 && 2 > 1', 'bool'), 'true', 'logical and');
+  eq(E('n != 0 && 10 / n > 1', 'bool', 'int n', [0]), 'false', 'short-circuit && avoids division by zero');
+  eq(E('n == 0 || 10 / n > 1', 'bool', 'int n', [0]), 'true', 'short-circuit ||');
+  eq(E('!(1 == 2)', 'bool'), 'true', 'not');
+  eq(E('n > 0 ? n : -n', 'int', 'int n', [-4]), '4', 'ternary');
+  eq(E("c == 'a'", 'bool', 'char c', [ch('a')]), 'true', 'char equality');
+  eq(E('s == "ab"', 'bool', 'string s', ['ab']), 'true', 'string equality is by value');
+  eq(E('Math.Max(3, Math.Min(9, 5))'), '5', 'Math.Max/Min');
+  eq(E('Math.Abs(-12)'), '12', 'Math.Abs');
+  eq(E('c', 'int', 'char c', [ch('A')]), '65', 'char converts to int on return');
+
+  // ---------- מחרוזות ומערכים ----------
+  eq(E('s.Length', 'int', 'string s', ['hello']), '5', 'string Length');
+  eq(E('s[1]', 'char', 'string s', ['hello']), "'e'", 'string index');
+  eq(E('s.Substring(1)', 'string', 'string s', ['hello']), '"ello"', 'Substring(a)');
+  eq(E('s.Substring(1, 3)', 'string', 'string s', ['hello']), '"ell"', 'Substring(a, b)');
+  eq(E('s.Substring(5)', 'string', 'string s', ['hello']), '""', 'Substring at the end is empty');
+  eq(E("s.IndexOf('l')", 'int', 'string s', ['hello']), '2', 'IndexOf char');
+  eq(E('s.ToUpper()', 'string', 'string s', ['Hi']), '"HI"', 'ToUpper');
+  eq(E('n.ToString()', 'string', 'int n', [42]), '"42"', 'int ToString');
+  eq(E("char.IsDigit(c)", 'bool', 'char c', [ch('7')]), 'true', 'char.IsDigit');
+  eq(E("char.IsUpper(c)", 'bool', 'char c', [ch('a')]), 'false', 'char.IsUpper');
+  eq(E('a[2]', 'int', 'int[] a', [arr('int', [5, 6, 7])]), '7', 'array index');
+  eq(E('a.Length', 'int', 'int[] a', [arr('int', [5, 6, 7])]), '3', 'array Length');
+  eq(val('static int[] F() { int[] a = {1, 2, 3}; a[0] = 9; return a; }', 'F', []), '{9, 2, 3}', 'array literal and element assignment');
+  eq(val('static int[] F(int n) { int[] a = new int[n]; for (int i = 0; i < n; i++) a[i] = i * i; return a; }', 'F', [4]), '{0, 1, 4, 9}', 'new int[n] and for');
+  eq(val('static void G(int[] a) { a[0]++; } static int F(int[] a) { G(a); G(a); return a[0]; }', 'F', [arr('int', [1])]), '3', 'arrays pass by reference');
+  eq(val('static int F() { int x = 5; x += 3; x *= 2; x -= 1; x /= 3; x %= 4; return x; }', 'F', []), '1', 'compound assignment');
+  eq(val('static int F() { int i = 5; int a = i++; int b = ++i; return a * 100 + b * 10 + i; }', 'F', []), '577', 'pre/post increment');
+  eq(val("static char F() { char c = 'a'; c += 2; c++; return c; }", 'F', []), "'d'", 'char += stays char');
+  eq(val('static int F(int n) { int s = 0; while (n > 0) { s += n; n--; } return s; }', 'F', [4]), '10', 'while loop');
+
+  // ---------- פעולות רקורסיביות ----------
+  const SUMDIG = 'public static int SumDigits(int n)\n{\n    if (n < 10)\n        return n;\n    return n % 10 + SumDigits(n / 10);\n}';
+  eq(val(SUMDIG, 'SumDigits', [4735]), '19', 'SumDigits(4735)');
+  eq(val(SUMDIG, 'SumDigits', [7]), '7', 'SumDigits(7)');
+  const FACT = 'static int Fact(int n) { if (n == 0) return 1; return n * Fact(n - 1); }';
+  eq(val(FACT, 'Fact', [5]), '120', 'Fact(5)');
+  const FIB = 'static int Fib(int n) { if (n <= 1) return n; return Fib(n - 1) + Fib(n - 2); }';
+  eq(val(FIB, 'Fib', [10]), '55', 'Fib(10)');
+  eq(res(FIB, 'Fib', [5]).r.calls, 15, 'Fib(5) makes 15 calls');
+  const REV = 'static string Rev(string s) { if (s.Length <= 1) return s; return Rev(s.Substring(1)) + s[0]; }';
+  eq(val(REV, 'Rev', ['abcd']), '"dcba"', 'Rev("abcd")');
+  eq(val(REV, 'Rev', ['']), '""', 'Rev("")');
+  const PAL = 'static bool Pal(string s) { if (s.Length < 2) return true; return s[0] == s[s.Length - 1] && Pal(s.Substring(1, s.Length - 2)); }';
+  eq(val(PAL, 'Pal', ['abcba']), 'true', 'Pal("abcba")');
+  eq(val(PAL, 'Pal', ['abca']), 'false', 'Pal("abca")');
+  const ASUM = 'static int Sum(int[] a, int i) { if (i == a.Length) return 0; return a[i] + Sum(a, i + 1); }';
+  eq(val(ASUM, 'Sum', [arr('int', [3, 8, 1]), 0]), '12', 'array Sum with index');
+  const GCD = 'static int Gcd(int a, int b) { if (b == 0) return a; return Gcd(b, a % b); }';
+  eq(val(GCD, 'Gcd', [84, 36]), '12', 'Gcd(84, 36)');
+  eq(val('static int S(int n) { if (n == 0) return 0; return n + S(n - 1); }', 'S', [450]), '101475', 'deep recursion (450 calls) within the limit');
+  eq(kind('static int S(int n) { if (n == 0) return 0; return n + S(n - 1); }', 'S', [600]), 'stack', 'over 500 nested calls is a stack error');
+  eq(kind('static int S(int n) { if (n == 0) return 0; return n + S(n - 1); }', 'S', [5000]), 'stack', 'JS stack overflow also maps to a stack error');
+  const PRINT = 'static void P(int n) { if (n == 0) return; Console.Write(n + " "); P(n - 1); Console.Write(n + " "); }';
+  eq(out(PRINT, 'P', [3]), '3 2 1 1 2 3 ', 'print before and after the call');
+  eq(out('static void P(int n) { if (n > 0) { P(n / 2); Console.Write(n % 2); } }', 'P', [6]), '110', 'binary digits by printing after the call');
+  eq(out('static void P(bool b) { Console.WriteLine(b); Console.WriteLine(); Console.Write(\'x\'); }', 'P', [true]), 'True\n\nx', 'WriteLine and printing bool/char');
+  eq(val('static bool Even(int n) { if (n == 0) return true; return Odd(n - 1); } static bool Odd(int n) { if (n == 0) return false; return Even(n - 1); }', 'Even', [7]), 'false', 'mutual recursion');
+  eq(val('class Program { public static int F(int n) { return n + 1; } }', 'F', [1]), '2', 'methods inside a class');
+  eq(val('// comment\nstatic int F(int n) /* block */ { return n; }', 'F', [3]), '3', 'comments');
+
+  // ---------- עץ קריאות ----------
+  {
+    const r = res(SUMDIG, 'SumDigits', [345], { trace: true }).r, t = r.tree;
+    const chain = []; for (let n = t; n; n = n.children[0]) chain.push(`${n.name}(${n.args.join(', ')}) = ${literal(n.ret)}`);
+    eq(chain.join(' → '), 'SumDigits(345) = 12 → SumDigits(34) = 7 → SumDigits(3) = 3', 'call chain from the trace tree');
+    eq(r.depth, 3, 'max depth');
+    const f = res(FIB, 'Fib', [3], { trace: true }).r.tree;
+    eq(f.children.map(c => c.args[0]).join(','), '2,1', 'Fib tree children in call order');
+  }
+
+  // ---------- שגיאות תחביר ----------
+  const SYN = [
+    ['static int F() { return 1 }', 'missing ;'],
+    ['static int F() { return 1;', 'missing }'],
+    ['static int F() { return (1 + 2; }', 'missing )'],
+    ['static int F() { return "abc; }', 'unclosed string'],
+    ["static char F() { return 'ab'; }", 'two-char char literal'],
+    ['static int F() { return 1.5; }', 'double literal'],
+    ['static int F() { int if = 2; return 1; }', 'keyword as name'],
+    ['static int F() { 1 + 2; return 1; }', 'expression statement that does nothing'],
+    ['static int F() { else return 1; }', 'else without if'],
+    ['static int F() { return 2 #; }', 'unexpected character'],
+  ];
+  for (const [src, msg] of SYN) eq(kind(src), 'syntax', 'syntax error: ' + msg);
+  eq(res('static int F()\n{\n  return 1\n}', 'F', []).line, 4, 'syntax error line points at the next token');
+
+  // ---------- שגיאות קומפילציה ----------
+  const COMP = [
+    ['static int F() { return x; }', 'undefined name'],
+    ['static int F() { return G(1); }', 'undefined function'],
+    ['static int F(int n) { return F(); }', 'wrong argument count'],
+    ['static int F(int n) { if (n > 0) return 1; }', 'not all paths return'],
+    ['static void F() { return 1; }', 'void returns a value'],
+    ['static int F() { return; }', 'missing return value'],
+    ['static int F(int n) { int n = 2; return n; }', 'variable redeclared'],
+    ['static int F() { return F; }', 'function used without parentheses'],
+    ['static int F(string s) { return s.Length(); }', 'Length with parentheses'],
+    ['static int F(string s) { return s.Size; }', 'unknown member'],
+    ['static int F() { return Math.Pow(2, 3); }', 'unsupported Math method'],
+    ['static int F() { return 1; } static int F() { return 2; }', 'duplicate function'],
+  ];
+  for (const [src, msg] of COMP) eq(kind(src), 'compile', 'compile error: ' + msg);
+  eq(kind('static int F(int n) { if (n > 0) return 1; else return 2; }', 'F', [1]), 'ok', 'if/else both returning is fine');
+  eq(kind('static int F(int n) { if (n > 0) { int x = 1; } int x = 2; return x; }', 'F', [1]), 'ok', 'sibling scopes may reuse a name');
+
+  // ---------- שגיאות ריצה ----------
+  const RUN = [
+    ['static int F() { return 1 / 0; }', 'runtime', 'division by zero'],
+    ['static int F(int n) { return 5 % n; }', 'runtime', 'remainder by zero', [0]],
+    ['static char F(string s) { return s[3]; }', 'runtime', 'string index out of range', ['abc']],
+    ['static int F(int[] a) { return a[-1]; }', 'runtime', 'array index out of range', [arr('int', [1])]],
+    ['static string F(string s) { return s.Substring(4); }', 'runtime', 'Substring out of range', ['abc']],
+    ['static int F(int n) { if (n) return 1; return 0; }', 'runtime', 'int as condition', [1]],
+    ['static int F(int n) { return n == 0 ? true : 1; }', 'runtime', 'bool returned from int function', [0]],
+    ['static bool F(int n) { return n + 1; }', 'runtime', 'int returned from bool function', [0]],
+    ['static int F() { int x; return x; }', 'runtime', 'unassigned variable'],
+    ['static char F() { char c = 65; return c; }', 'runtime', 'int to char without cast'],
+    ['static int F(int n) { return F(n - 1); }', 'stack', 'recursion without a base case', [3]],
+    ['static int F(int n) { if (n == 0) return 0; return F(n - 2); }', 'stack', 'base case skipped', [3]],
+    ['static int F() { int i = 0; while (true) { i++; } return i; }', 'steps', 'infinite loop'],
+  ];
+  for (const [src, k, msg, args] of RUN) eq(kind(src, 'F', args || []), k, `${k} error: ${msg}`);
+
+  // ---------- חורים ----------
+  // מנתח תבנית, משבץ את מה שהוקלד, ומריץ על כל הקלטים. מחזיר רשימת ערכים או "ERR:kind"
+  function fill(tpl, name, answers, inputs) {
+    try {
+      const prog = parseProgram(tpl), blanks = {};
+      answers.forEach((a, i) => (blanks[i + 1] = parseExpr(a)));
+      check(prog, blanks);
+      return inputs.map(args => { const r = run(prog, name, args, { blanks }); return literal(r.value) + r.out; }).join('|');
+    } catch (e) { if (!(e instanceof CSError)) throw e; return 'ERR:' + e.kind + (e.blank ? '@' + e.blank : ''); }
+  }
+  const TPL = 'static int SumDigits(int n) { if (@1) return @2; return n % 10 + SumDigits(@3); }';
+  const IN = [[0], [7], [10], [99], [4735], [100200]];
+  const want = fill(TPL, 'SumDigits', ['n < 10', 'n', 'n / 10'], IN);
+  eq(want, '0|7|1|18|19|3', 'reference answers');
+  const SAME = [
+    ['n <= 9', 'n', 'n / 10'], ['n<10', 'n % 10', '(n - n % 10) / 10'], ['10 > n', 'n', 'n/10'], ['n == 0', '0', 'n / 10'],
+  ];
+  for (const a of SAME) eq(fill(TPL, 'SumDigits', a, IN), want, 'equivalent answer accepted: ' + a.join(' ; '));
+  // נראה כמו טעות "אחד-הלאה", אבל באמת נכון: SumDigits(9) = 9 + SumDigits(0)
+  eq(fill(TPL, 'SumDigits', ['n < 9', 'n', 'n / 10'], IN), want, 'n < 9 is also correct');
+  const DIFF = [
+    [['n < 10', '0', 'n / 10'], 'wrong base value'],
+    [['n < 100', 'n', 'n / 10'], 'stops too early'],
+    [['n < 10', 'n', 'n % 10'], 'n % 10 instead of n / 10'],
+    [['n > 10', 'n', 'n / 10'], 'reversed condition'],
+  ];
+  for (const [a, msg] of DIFF) ok(fill(TPL, 'SumDigits', a, IN) !== want, 'wrong answer rejected: ' + msg);
+  eq(fill(TPL, 'SumDigits', ['n < 10', 'n', 'n'], IN), 'ERR:stack', 'no progress gives stack error');
+  eq(fill(TPL, 'SumDigits', ['n < 10', 'n', 'n + 1'], IN), 'ERR:stack', 'moving away from the base case');
+  eq(fill(TPL, 'SumDigits', ['n = 0', 'n', 'n / 10'], IN), 'ERR:runtime', 'assignment in condition is a type error');
+  eq(fill(TPL, 'SumDigits', ['x < 10', 'n', 'n / 10'], IN), 'ERR:compile@1', 'undefined name inside blank 1');
+  eq(fill(TPL, 'SumDigits', ['n < 10', 'n', 'n / 10;'], IN), 'ERR:syntax', 'semicolon inside a blank');
+  eq(fill(TPL, 'SumDigits', ['n < 10', '', 'n / 10'], IN), 'ERR:syntax', 'empty blank');
+  eq(fill(TPL, 'SumDigits', ['n < 10', 'n', 'n / 10)'], IN), 'ERR:syntax', 'extra parenthesis in blank');
+  const TPL2 = 'static bool Has(string s, char c) { if (s.Length == 0) return @1; return s[0] == c || Has(@2, c); }';
+  const IN2 = [['', ch('a')], ['abc', ch('c')], ['abc', ch('x')]];
+  eq(fill(TPL2, 'Has', ['false', 's.Substring(1)'], IN2), 'false|true|false', 'string template');
+  eq(fill(TPL2, 'Has', ['true', 's.Substring(1)'], IN2), 'true|true|true', 'string template wrong base value');
+  eq(fill(TPL2, 'Has', ['false', 's.Substring(0)'], IN2), 'ERR:stack', 'Substring(0) does not shrink');
+  eq(fill(TPL2, 'Has', ['0', 's.Substring(1)'], IN2), 'ERR:runtime', 'int in a bool function');
+  try { parseProgram(TPL); ok(true, ''); } catch (e) { ok(false, 'template with blanks parses without answers: ' + e.message); }
+
+  // ---------- ביצועים ----------
+  {
+    const t0 = performance.now();
+    for (let i = 0; i < 200; i++) run(parseProgram(FIB), 'Fib', [12]);
+    const ms = (performance.now() - t0) / 200;
+    ok(ms < 20, `Fib(12) takes ${ms.toFixed(2)} ms`);
+    log(`Fib(12): ${ms.toFixed(2)} ms per run (parse + run)`);
+  }
+
+  document.getElementById('summary').innerHTML = fail
+    ? `<span class="fail">${fail} נכשלו</span>, ${pass} עברו`
+    : `<span class="pass">כל ${pass} הבדיקות עברו</span>`;
+  document.getElementById('log').textContent = lines.join('\n');
+})();
+</script>
+</body>
+</html>

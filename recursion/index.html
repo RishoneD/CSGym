@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>תרגול פעולות רקורסיביות</title>
+<link rel="stylesheet" href="../common/style.css">
+</head>
+<body>
+<header>
+  <h1>תרגול פעולות רקורסיביות</h1>
+  <span class="ver" dir="ltr" id="ver"></span>
+  <a class="home" href="../index.html">→ לדף הראשי</a>
+</header>
+
+<main>
+  <section id="setup" class="card">
+    <h2>הגדרות תרגול</h2>
+    <label class="row">רמת קושי התחלתית:
+      <select id="level">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+      </select>
+    </label>
+    <fieldset>
+      <legend>נושאים</legend>
+      <label class="opt"><input type="checkbox" name="topic" value="num" checked> מספרים</label>
+      <label class="opt"><input type="checkbox" name="topic" value="str" checked> מחרוזות</label>
+      <label class="opt"><input type="checkbox" name="topic" value="arr" checked> מערכים</label>
+    </fieldset>
+    <p id="setNote" class="note"></p>
+    <button id="start" class="primary">התחלה</button>
+  </section>
+
+  <section id="play" class="card" hidden></section>
+</main>
+
+<footer>נוצר על ידי ראשון דיבקר בעזרת Claude · <span dir="ltr" id="ver2"></span></footer>
+
+<!-- ======================= מנוע (ללא DOM) ======================= -->
+<script src="../common/csharp.js"></script>
+<script src="../common/core.js"></script>
+<script id="engine">
+(function (global) {
+  'use strict';
+
+  const VERSION = 'v0.2';
+  const MAX_LEVEL = 5;
+  const MAX_ATTEMPTS = 3;
+  const MAX_TRIES = 60;   // הגרלות קלט עד תרגיל שמתאים למגבלות
+  // מגבלות לתרגיל מעקב שפותרים ביד
+  const LIMITS = { calls: 41, depth: 15, out: 40, str: 20, int: 1e6 };
+  const CUR_SHARE = 0.6;   // חלק התרגילים מהרמה הנוכחית
+
+  const { makeRng, randomSeed, esc, inlineCode } = global.Core;
+  const { parseProgram, run, literal, arr, ch } = global.CS;
+
+  // ---------------- קלטים ----------------
+  const numK = (rng, k) => { let n = rng.int(1, 9); for (let i = 1; i < k; i++) n = n * 10 + rng.int(0, 9); return n; };
+  const fromDigits = d => Number(d.join(''));
+  const word = (rng, len, abc = 'abc') => Array.from({ length: len }, () => rng.pick(abc.split(''))).join('');
+  const ints = (rng, len, lo, hi) => arr('int', Array.from({ length: len }, () => rng.int(lo, hi)));
+  function palWord(rng, len, abc) {
+    const half = word(rng, Math.floor(len / 2), abc), mid = len % 2 ? word(rng, 1, abc) : '';
+    let s = half + mid + half.split('').reverse().join('');
+    if (rng.next() < 0.5) {   // שובר פלינדרום: תו אחד בחצי הראשון
+      const i = rng.int(0, Math.floor(len / 2) - 1), c = rng.pick(abc.split('').filter(x => x !== s[i]));
+      s = s.slice(0, i) + c + s.slice(i + 1);
+    }
+    return s;
+  }
+
+  /* ---------------- תבניות ----------------
+   * code: הקוד ב-C#. $F = שם הפעולה הנקראת, $G = פעולת עזר.
+   *       «...» מסמן חור עתידי בתרגילי השלמה (בתרגיל מעקב הסימון פשוט נמחק).
+   * args(rng): ערכי הקלט לקריאה.  topic: num | str | arr
+   */
+  const T = [
+    // ----- רמה 1: פרמטר int אחד, רקורסיה פשוטה -----
+    { id: 'sumTo', level: 1, topic: 'num', args: r => [r.int(3, 7)], code: `
+public static int $F(int n)
+{
+    if («n == 0»)
+        return «0»;
+    return «n + $F(n - 1)»;
+}` },
+    { id: 'fact', level: 1, topic: 'num', args: r => [r.int(3, 6)], code: `
+public static int $F(int n)
+{
+    if («n == 1»)
+        return «1»;
+    return «n * $F(n - 1)»;
+}` },
+    { id: 'sumStep2', level: 1, topic: 'num', args: r => [r.int(5, 12)], code: `
+public static int $F(int n)
+{
+    if («n <= 0»)
+        return «0»;
+    return «n + $F(n - 2)»;
+}` },
+    { id: 'pow2', level: 1, topic: 'num', args: r => [r.int(3, 8)], code: `
+public static int $F(int n)
+{
+    if («n == 0»)
+        return «1»;
+    return «2 * $F(n - 1)»;
+}` },
+    { id: 'squares', level: 1, topic: 'num', args: r => [r.int(3, 7)], code: `
+public static int $F(int n)
+{
+    if («n == 1»)
+        return «1»;
+    return «$F(n - 1) + 2 * n - 1»;
+}` },
+
+    // ----- רמה 2: ספרות, שני פרמטרים, bool -----
+    { id: 'sumDigits', level: 2, topic: 'num', args: r => [numK(r, r.int(3, 5))], code: `
+public static int $F(int n)
+{
+    if («n < 10»)
+        return «n»;
+    return «n % 10 + $F(n / 10)»;
+}` },
+    { id: 'countDigits', level: 2, topic: 'num', args: r => [numK(r, r.int(3, 6))], code: `
+public static int $F(int n)
+{
+    if («n < 10»)
+        return «1»;
+    return «1 + $F(n / 10)»;
+}` },
+    { id: 'maxDigit', level: 2, topic: 'num', args: r => [numK(r, r.int(3, 5))], code: `
+public static int $F(int n)
+{
+    if («n < 10»)
+        return «n»;
+    return «Math.Max(n % 10, $F(n / 10))»;
+}` },
+    { id: 'hasDigit', level: 2, topic: 'num', code: `
+public static bool $F(int n, int d)
+{
+    if («n == 0»)
+        return «false»;
+    if («n % 10 == d»)
+        return «true»;
+    return «$F(n / 10, d)»;
+}`, args: r => {
+      const n = numK(r, r.int(3, 5)), ds = String(n).split('').map(Number);
+      const out = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(d => !ds.includes(d));
+      return [n, r.next() < 0.5 || !out.length ? r.pick(ds) : r.pick(out)];
+    } },
+    { id: 'countDigit', level: 2, topic: 'num', code: `
+public static int $F(int n, int d)
+{
+    if («n == 0»)
+        return «0»;
+    if («n % 10 == d»)
+        return «1 + $F(n / 10, d)»;
+    return «$F(n / 10, d)»;
+}`, args: r => {
+      const d = r.int(1, 9), len = r.int(5, 6), k = r.int(2, 3);
+      const ds = Array.from({ length: len }, () => r.int(0, 9));
+      r.shuffle([...Array(len).keys()]).slice(0, k).forEach(i => (ds[i] = d));
+      if (ds[0] === 0) ds[0] = d;
+      return [fromDigits(ds), d];
+    } },
+    { id: 'allEven', level: 2, topic: 'num', code: `
+public static bool $F(int n)
+{
+    if («n < 10»)
+        return «n % 2 == 0»;
+    return «n % 2 == 0 && $F(n / 10)»;
+}`, args: r => {
+      const len = r.int(3, 5), ds = Array.from({ length: len }, (_, i) => r.pick(i ? [0, 2, 4, 6, 8] : [2, 4, 6, 8]));
+      if (r.next() < 0.5) { const i = r.int(0, len - 1); ds[i] = r.pick([1, 3, 5, 7, 9]); }
+      return [fromDigits(ds)];
+    } },
+    { id: 'power', level: 2, topic: 'num', args: r => [r.int(2, 5), r.int(2, 4)], code: `
+public static int $F(int b, int e)
+{
+    if («e == 0»)
+        return «1»;
+    return «b * $F(b, e - 1)»;
+}` },
+    { id: 'mult', level: 2, topic: 'num', args: r => [r.int(2, 9), r.int(2, 6)], code: `
+public static int $F(int a, int b)
+{
+    if («b == 0»)
+        return «0»;
+    return «a + $F(a, b - 1)»;
+}` },
+    { id: 'divSub', level: 2, topic: 'num', args: r => [r.int(10, 40), r.int(3, 7)], code: `
+public static int $F(int a, int b)
+{
+    if («a < b»)
+        return «0»;
+    return «1 + $F(a - b, b)»;
+}` },
+    { id: 'modSub', level: 2, topic: 'num', args: r => [r.int(10, 40), r.int(3, 7)], code: `
+public static int $F(int a, int b)
+{
+    if («a < b»)
+        return «a»;
+    return «$F(a - b, b)»;
+}` },
+    { id: 'gcd', level: 2, topic: 'num', code: `
+public static int $F(int a, int b)
+{
+    if («b == 0»)
+        return «a»;
+    return «$F(b, a % b)»;
+}`, args: r => { const g = r.int(2, 9), x = r.int(2, 12), y = r.int(2, 12); return [g * x, g * y]; } },
+
+    // ----- רמה 3: מחרוזות, מערכים, הדפסה -----
+    { id: 'countChar', level: 3, topic: 'str', args: r => [word(r, r.int(5, 8)), ch(r.pick(['a', 'b']))], code: `
+public static int $F(string s, char c)
+{
+    if («s.Length == 0»)
+        return «0»;
+    if («s[0] == c»)
+        return «1 + $F(s.Substring(1), c)»;
+    return «$F(s.Substring(1), c)»;
+}` },
+    { id: 'reverse', level: 3, topic: 'str', args: r => [word(r, r.int(3, 6), 'abcdefgh')], code: `
+public static string $F(string s)
+{
+    if («s.Length <= 1»)
+        return «s»;
+    return «$F(s.Substring(1)) + s[0]»;
+}` },
+    { id: 'removeChar', level: 3, topic: 'str', args: r => [word(r, r.int(5, 7)), ch(r.pick(['a', 'b']))], code: `
+public static string $F(string s, char c)
+{
+    if («s.Length == 0»)
+        return «""»;
+    if («s[0] == c»)
+        return «$F(s.Substring(1), c)»;
+    return «s[0] + $F(s.Substring(1), c)»;
+}` },
+    { id: 'isPal', level: 3, topic: 'str', args: r => [palWord(r, r.int(4, 7), 'abc')], code: `
+public static bool $F(string s)
+{
+    if («s.Length <= 1»)
+        return «true»;
+    if («s[0] != s[s.Length - 1]»)
+        return «false»;
+    return «$F(s.Substring(1, s.Length - 2))»;
+}` },
+    { id: 'arrSum', level: 3, topic: 'arr', args: r => [ints(r, r.int(4, 6), 1, 20), r.int(0, 1)], code: `
+public static int $F(int[] arr, int i)
+{
+    if («i == arr.Length»)
+        return «0»;
+    return «arr[i] + $F(arr, i + 1)»;
+}` },
+    { id: 'arrMax', level: 3, topic: 'arr', args: r => [ints(r, r.int(4, 6), 1, 50), 0], code: `
+public static int $F(int[] arr, int i)
+{
+    if («i == arr.Length - 1»)
+        return «arr[i]»;
+    return «Math.Max(arr[i], $F(arr, i + 1))»;
+}` },
+    { id: 'arrCountEven', level: 3, topic: 'arr', args: r => [ints(r, r.int(5, 7), 1, 30), 0], code: `
+public static int $F(int[] arr, int i)
+{
+    if («i == arr.Length»)
+        return «0»;
+    if («arr[i] % 2 == 0»)
+        return «1 + $F(arr, i + 1)»;
+    return «$F(arr, i + 1)»;
+}` },
+    { id: 'printDigitsRev', level: 3, topic: 'num', args: r => [numK(r, r.int(3, 5))], code: `
+public static void $F(int n)
+{
+    if («n > 0»)
+    {
+        Console.Write(n % 10 + " ");
+        $F(«n / 10»);
+    }
+}` },
+    { id: 'printDigits', level: 3, topic: 'num', args: r => [numK(r, r.int(3, 5))], code: `
+public static void $F(int n)
+{
+    if («n > 0»)
+    {
+        $F(«n / 10»);
+        Console.Write(n % 10 + " ");
+    }
+}` },
+    { id: 'printUp', level: 3, topic: 'num', args: r => [r.int(3, 6)], code: `
+public static void $F(int n)
+{
+    if («n == 0»)
+        return;
+    $F(«n - 1»);
+    Console.Write(n + " ");
+}` },
+    { id: 'printBinary', level: 3, topic: 'num', args: r => [r.int(5, 40)], code: `
+public static void $F(int n)
+{
+    if («n > 0»)
+    {
+        $F(«n / 2»);
+        Console.Write(n % 2);
+    }
+}` },
+    { id: 'printRevStr', level: 3, topic: 'str', args: r => [word(r, r.int(3, 6), 'abcdefgh')], code: `
+public static void $F(string s)
+{
+    if («s.Length > 0»)
+    {
+        $F(«s.Substring(1)»);
+        Console.Write(s[0]);
+    }
+}` },
+    { id: 'removeDigits', level: 3, topic: 'str', args: r => [word(r, r.int(5, 7), 'ab12')], code: `
+public static string $F(string s)
+{
+    if («s.Length == 0»)
+        return «""»;
+    if («char.IsDigit(s[0])»)
+        return «$F(s.Substring(1))»;
+    return «s[0] + $F(s.Substring(1))»;
+}` },
+
+    // ----- רמה 4: שתי קריאות, הדפסה לפני ואחרי, צבירה -----
+    { id: 'fib', level: 4, topic: 'num', args: r => [r.int(4, 6)], code: `
+public static int $F(int n)
+{
+    if («n <= 1»)
+        return «n»;
+    return «$F(n - 1) + $F(n - 2)»;
+}` },
+    { id: 'halfOrMinus', level: 4, topic: 'num', args: r => [r.int(10, 60)], code: `
+public static int $F(int n)
+{
+    if («n == 0»)
+        return «0»;
+    if («n % 2 == 0»)
+        return «$F(n / 2) + 1»;
+    return «$F(n - 1) + 1»;
+}` },
+    { id: 'printBeforeAfter', level: 4, topic: 'num', args: r => [r.int(2, 4)], code: `
+public static void $F(int n)
+{
+    if («n == 0»)
+        return;
+    Console.Write(n + " ");
+    $F(«n - 1»);
+    Console.Write(n + " ");
+}` },
+    { id: 'printRuler', level: 4, topic: 'num', args: r => [r.int(2, 3)], code: `
+public static void $F(int n)
+{
+    if («n == 0»)
+        return;
+    $F(«n - 1»);
+    Console.Write(n + " ");
+    $F(«n - 1»);
+}` },
+    { id: 'binom', level: 4, topic: 'num', args: r => { const n = r.int(4, 6); return [n, r.int(1, n - 1)]; }, code: `
+public static int $F(int n, int k)
+{
+    if («k == 0 || k == n»)
+        return «1»;
+    return «$F(n - 1, k - 1) + $F(n - 1, k)»;
+}` },
+    { id: 'revAcc', level: 4, topic: 'num', args: r => [numK(r, r.int(3, 4)), 0], code: `
+public static int $F(int n, int acc)
+{
+    if («n == 0»)
+        return «acc»;
+    return «$F(n / 10, acc * 10 + n % 10)»;
+}` },
+    { id: 'swapEnds', level: 4, topic: 'str', args: r => [word(r, r.int(4, 7), 'abcdefgh')], code: `
+public static string $F(string s)
+{
+    if («s.Length < 2»)
+        return «s»;
+    return «s[s.Length - 1] + $F(s.Substring(1, s.Length - 2)) + s[0]»;
+}` },
+    { id: 'adjacentPairs', level: 4, topic: 'str', args: r => [word(r, r.int(5, 8), 'ab'), 0], code: `
+public static int $F(string s, int i)
+{
+    if («i >= s.Length - 1»)
+        return «0»;
+    if («s[i] == s[i + 1]»)
+        return «1 + $F(s, i + 1)»;
+    return «$F(s, i + 1)»;
+}` },
+    { id: 'arrMaxIndex', level: 4, topic: 'arr', args: r => [ints(r, r.int(4, 6), 1, 50), 0], code: `
+public static int $F(int[] arr, int i)
+{
+    if («i == arr.Length - 1»)
+        return «i»;
+    int j = $F(arr, i + 1);
+    if («arr[i] > arr[j]»)
+        return «i»;
+    return «j»;
+}` },
+
+    // ----- רמה 5: פעולת עזר, רקורסיה הדדית, חלוקה לחצאים -----
+    { id: 'palHelper', level: 5, topic: 'str', args: r => [palWord(r, r.int(5, 8), 'abc')], code: `
+public static bool $G(string s, int lo, int hi)
+{
+    if («lo >= hi»)
+        return «true»;
+    if («s[lo] != s[hi]»)
+        return «false»;
+    return «$G(s, lo + 1, hi - 1)»;
+}
+
+public static bool $F(string s)
+{
+    return $G(s, 0, s.Length - 1);
+}` },
+    { id: 'sortedHelper', level: 5, topic: 'arr', code: `
+public static bool $G(int[] arr, int i)
+{
+    if («i >= arr.Length - 1»)
+        return «true»;
+    return «arr[i] <= arr[i + 1] && $G(arr, i + 1)»;
+}
+
+public static bool $F(int[] arr)
+{
+    return $G(arr, 0);
+}`, args: r => {
+      const a = ints(r, r.int(4, 6), 1, 40).sort((x, y) => x - y);
+      if (r.next() < 0.5) { const i = r.int(0, a.length - 2); [a[i], a[i + 1]] = [a[i + 1], a[i]]; }
+      return [a];
+    } },
+    { id: 'mutual', level: 5, topic: 'num', args: r => [r.int(3, 9)], code: `
+public static bool $F(int n)
+{
+    if («n == 0»)
+        return «true»;
+    return «$G(n - 1)»;
+}
+
+public static bool $G(int n)
+{
+    if («n == 0»)
+        return «false»;
+    return «$F(n - 1)»;
+}` },
+    { id: 'descents', level: 5, topic: 'num', args: r => [numK(r, r.int(4, 6))], code: `
+public static int $F(int n)
+{
+    if («n < 10»)
+        return «0»;
+    int last = n % 10;
+    int prev = n / 10 % 10;
+    if («prev > last»)
+        return «1 + $F(n / 10)»;
+    return «$F(n / 10)»;
+}` },
+    { id: 'halvesSum', level: 5, topic: 'arr', args: r => { const a = ints(r, r.int(4, 6), 1, 20); return [a, 0, a.length - 1]; }, code: `
+public static int $F(int[] arr, int lo, int hi)
+{
+    if («lo == hi»)
+        return «arr[lo]»;
+    int mid = (lo + hi) / 2;
+    return «$F(arr, lo, mid) + $F(arr, mid + 1, hi)»;
+}` },
+  ];
+  const BY_ID = Object.fromEntries(T.map(t => [t.id, t]));
+  const TOPIC_NAMES = { num: 'מספרים', str: 'מחרוזות', arr: 'מערכים' };
+  const NAMES = ['What', 'Secret', 'Mystery', 'Sod', 'Something', 'Calc', 'Func', 'Magic'];
+  const HELPERS = ['Help', 'Aux', 'Inner', 'Check'];
+
+  // הקוד להצגה: שמות פעולות, בלי סימוני חורים
+  const codeOf = (t, F, G) => t.code.trim().replace(/\$F/g, F).replace(/\$G/g, G).replace(/[«»]/g, '');
+  const progCache = new Map();
+  function progOf(t) {   // ניתוח פעם אחת לכל תבנית (בשמות $F/$G קבועים)
+    if (!progCache.has(t.id)) progCache.set(t.id, parseProgram(codeOf(t, 'F', 'G')));
+    return progCache.get(t.id);
+  }
+
+  // ---------------- רמות ונושאים ----------------
+  const minLevel = topics => Math.min(...T.filter(t => topics.includes(t.topic)).map(t => t.level));
+  // כ-60% מהרמה הנוכחית, השאר מרמה נמוכה יותר (בסיכוי שווה), ואז תבנית בתוכה
+  function pickTemplate(rng, level, topics, prevKind) {
+    const pool = T.filter(t => topics.includes(t.topic) && t.level <= level);
+    const levels = [...new Set(pool.map(t => t.level))].sort((a, b) => a - b);
+    const top = levels[levels.length - 1];
+    const lv = levels.length > 1 && rng.next() >= CUR_SHARE ? rng.pick(levels.slice(0, -1)) : top;
+    let cands = pool.filter(t => t.level === lv && t.id !== prevKind);
+    if (!cands.length) cands = pool.filter(t => t.level === lv);
+    return rng.pick(cands);
+  }
+
+  // ---------------- תרגיל ----------------
+  const countCalls = (node, name) => (node.name === name ? 1 : 0) + node.children.reduce((s, c) => s + countCalls(c, name), 0);
+  const callText = (name, args) => `${name}(${args.map(a => (Array.isArray(a) ? 'arr' : literal(a))).join(', ')})`;
+
+  function makeExercise(o) {
+    const seed = o.seed !== undefined ? o.seed : randomSeed();
+    const rng = makeRng(seed);
+    const t = o.template ? BY_ID[o.template] : pickTemplate(rng, o.level, o.topics || ['num', 'str', 'arr'], o.prevKind);
+    const prog = progOf(t), ret = prog.funcs.F.ret, helper = /\$G/.test(t.code);
+    const F = rng.pick(NAMES), G = rng.pick(HELPERS);
+    // מעקב: ערך מוחזר / פלט, ומרמה 3 לפעמים "כמה קריאות" (רק בפעולה אחת שקוראת לעצמה)
+    const q = ret === 'void' ? 'out' : o.level >= 3 && !helper && rng.next() < 0.3 ? 'calls' : 'ret';
+    for (let i = 0; i < MAX_TRIES; i++) {
+      const args = t.args(rng);
+      const r = run(prog, 'F', args, { trace: true });
+      const v = r.value;
+      if (r.calls > LIMITS.calls || r.depth > LIMITS.depth || r.out.length > LIMITS.out) continue;
+      if (typeof v === 'string' && v.length > LIMITS.str) continue;
+      if (typeof v === 'number' && Math.abs(v) > LIMITS.int) continue;
+      if (q === 'out' && !r.out.trim()) continue;
+      const arrArg = args.find(Array.isArray);
+      return {
+        kind: t.id, seed, level: o.level || t.level, tlevel: t.level, topic: t.topic, q, ret, helper,
+        name: F, helperName: G, code: codeOf(t, F, G), args,
+        call: callText(F, args), decl: arrArg ? `int[] arr = ${literal(arrArg)};` : null,
+        value: v, out: r.out, calls: q === 'calls' ? countCalls(r.tree, 'F') : r.calls, tree: r.tree,
+      };
+    }
+    throw new Error(`no valid input for ${t.id} (seed ${seed})`);
+  }
+
+  // ---------------- שאלה, תשובה ובדיקה ----------------
+  function questionHtml(ex) {
+    const pre = ex.decl ? `בהינתן המערך ${inlineCode(ex.decl)}, ` : '';
+    if (ex.q === 'out') return `${pre}מה יודפס בעקבות הקריאה ${inlineCode(ex.call)}?`;
+    if (ex.q === 'calls') return `${pre}כמה פעמים תיקרא הפעולה ${inlineCode(ex.name)} בעקבות הקריאה ${inlineCode(ex.call)}, כולל הקריאה הזו?`;
+    return `${pre}מה תחזיר הקריאה ${inlineCode(ex.call)}?`;
+  }
+  const normOut = s => s.replace(/\s+/g, ' ').trim();
+  const noSpace = s => s.replace(/\s+/g, '');
+  const unquote = (s, q) => (s.length >= 2 && s[0] === q && s[s.length - 1] === q ? s.slice(1, -1) : s);
+  // ערך מוחזר כפי שהתלמיד כותב אותו: מספר, true/false, מחרוזת (עם או בלי ""), תו (עם או בלי '')
+  function checkValue(raw, v, ret) {
+    const s = raw.trim();
+    if (ret === 'int') {
+      if (!/^-?\d+$/.test(s.replace(/\s/g, ''))) return { invalid: 'נא להקליד מספר שלם.' };
+      return { ok: Number(s.replace(/\s/g, '')) === v };
+    }
+    if (ret === 'bool') {
+      if (!/^(true|false)$/i.test(s)) return { invalid: 'נא לכתוב true או false.' };
+      return { ok: s.toLowerCase() === String(v) };
+    }
+    if (ret === 'char') {
+      const c = unquote(s, "'");
+      if (c.length !== 1) return { invalid: 'נא לכתוב תו אחד.' };
+      return { ok: c.charCodeAt(0) === v.c };
+    }
+    if (!s) return { invalid: 'לא הוקלדה תשובה. מחרוזת ריקה כותבים כ-"".' };
+    const w = unquote(s, '"');
+    if (w === v) return { ok: true };
+    return { ok: false, hint: w.toLowerCase() === v.toLowerCase() ? 'שימו לב לאותיות גדולות וקטנות.' : undefined };
+  }
+  function answerSpec(ex) {
+    if (ex.q === 'out') return {
+      type: 'text', label: 'הפלט', width: 14, shown: inlineCode(normOut(ex.out)),
+      check(raw) {
+        if (!raw.trim()) return { invalid: 'לא הוקלדה תשובה.' };
+        if (normOut(raw) === normOut(ex.out)) return { ok: true };
+        if (noSpace(raw) === noSpace(ex.out)) return { invalid: 'כמעט: בדקו את הרווחים בין הערכים בפלט.' };
+        return { ok: false };
+      },
+    };
+    if (ex.q === 'calls') return {
+      type: 'text', label: 'מספר הקריאות', width: 6, shown: inlineCode(String(ex.calls)),
+      check: raw => checkValue(raw, ex.calls, 'int'),
+    };
+    return {
+      type: 'text', label: 'הערך המוחזר', width: ex.ret === 'string' ? 12 : 8, shown: inlineCode(literal(ex.value)),
+      check: raw => checkValue(raw, ex.value, ex.ret),
+    };
+  }
+
+  // ---------------- פתרון: מעקב אחר הקריאות ----------------
+  const MAX_TRACE = 60;
+  function traceLines(ex) {
+    const lines = [], rename = n => (n === 'F' ? ex.name : ex.helperName);
+    const walk = (node, d) => {
+      if (lines.length > MAX_TRACE) return;
+      const ind = '<span class="gd">' + '│ '.repeat(d) + '</span>';
+      const head = `${esc(rename(node.name))}(${esc(node.args.join(', '))})`;
+      const ret = node.ret === undefined ? '' : ` <span class="ret">→ ${esc(literal(node.ret))}</span>`;
+      if (!node.events.length) { lines.push(ind + head + ret); return; }
+      lines.push(ind + head);
+      for (const e of node.events) {
+        if (e.call) walk(e.call, d + 1);
+        else lines.push(ind + '<span class="gd">│ </span>' + `<span class="pr">» ${esc(JSON.stringify(e.print).slice(1, -1))}</span>`);
+      }
+      if (ret) lines.push(ind + `<span class="gd">└</span>${ret}`);
+    };
+    walk(ex.tree, 0);
+    if (lines.length > MAX_TRACE) { lines.length = MAX_TRACE; lines.push('…'); }
+    return lines;
+  }
+  function traceHtml(ex) {
+    const legend = ex.ret === 'void'
+      ? 'כל שורה היא קריאה, וההזחה מראה מי קרא למי. <bdi dir="ltr">»</bdi> = מה שהודפס, לפי הסדר.'
+      : 'כל שורה היא קריאה, וההזחה מראה מי קרא למי. <bdi dir="ltr">→</bdi> = הערך שהקריאה מחזירה.';
+    let end = '';
+    if (ex.q === 'out') end = `<p>הפלט: ${inlineCode(normOut(ex.out))}</p>`;
+    else if (ex.q === 'calls') end = `<p>סך הכול ${ex.calls} קריאות ל-${inlineCode(ex.name)}.</p>`;
+    else end = `<p>הקריאה ${inlineCode(ex.call)} מחזירה ${inlineCode(literal(ex.value))}.</p>`;
+    return `<p class="muted">${legend}</p><div class="trace" dir="ltr">${traceLines(ex).join('\n')}</div>${end}`;
+  }
+
+  global.Engine = {
+    VERSION, MAX_LEVEL, MAX_ATTEMPTS, LIMITS, TEMPLATES: T, TOPIC_NAMES,
+    minLevel, pickTemplate, makeExercise, codeOf, progOf, questionHtml, answerSpec, checkValue, traceHtml, traceLines,
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<!-- ======================= ממשק (common/core.js) ======================= -->
+<script>
+(function () {
+  'use strict';
+  const E = window.Engine, $ = id => document.getElementById(id);
+  const topics = () => [...document.querySelectorAll('input[name=topic]:checked')].map(x => x.value);
+  // מחרוזות ומערכים מתחילים ברמה 3: אם נבחרו רק הם, הרמה עולה
+  function updateNote() {
+    const tp = topics();
+    if (!tp.length) { $('setNote').textContent = 'נא לבחור לפחות נושא אחד.'; return; }
+    const min = E.minLevel(tp);
+    $('setNote').textContent = +$('level').value < min ? `בנושאים שנבחרו התרגילים מתחילים מרמה ${min}.` : '';
+  }
+  document.querySelectorAll('input[name=topic], #level').forEach(el => el.addEventListener('change', updateNote));
+  function readSettings() {
+    const tp = topics();
+    if (!tp.length) { updateNote(); return null; }
+    return { level: Math.max(+$('level').value, E.minLevel(tp)), topics: tp };
+  }
+  Core.mountUI({
+    engine: E, readSettings, minLevel: s => E.minLevel(s.topics),
+    makeExercise: (s, level, prevKind) => E.makeExercise({ level, topics: s.topics, prevKind }),
+    ctypeHtml: ex => E.TOPIC_NAMES[ex.topic],
+    render: ex => ({ html: Core.codeHtml(ex.code) }),
+    parts: ex => [{ html: E.questionHtml(ex), answers: [E.answerSpec(ex)] }],
+    solution: { title: 'מעקב אחר הקריאות', html: ex => E.traceHtml(ex), onCorrect: true },
+    failSuffix: 'למטה מעקב אחר הקריאות.',
+  });
+  updateNote();
+})();
+</script>
+</body>
+</html>

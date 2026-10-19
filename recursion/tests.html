@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בדיקות: פעולות רקורסיביות</title>
+<link rel="stylesheet" href="../common/style.css">
+<style>
+  body { margin: 16px; }
+  h1 { font-size: 20px; } h2 { font-size: 17px; margin-top: 24px; }
+  pre.log { background: #fff; border: 1px solid #d9dee6; border-radius: 8px; padding: 10px; direction: ltr; text-align: left; white-space: pre-wrap; font-size: 13px; }
+  .pass { color: #15803d; font-weight: bold; } .fail { color: #b42318; font-weight: bold; }
+  .gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+  figure { margin: 0; background: #fff; border: 1px solid #d9dee6; border-radius: 8px; padding: 8px; min-width: 0; }
+  figcaption { font-size: 13px; color: #6b7280; margin-bottom: 6px; }
+  figure pre.code { font-size: 13px; }
+  figure .trace { font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>בדיקות מודול הפעולות הרקורסיביות וגלריית תרגילים</h1>
+<p>דורש שרת מקומי. פרמטר <code dir="ltr">?n=200</code> = מספר תרגילים לכל תבנית.</p>
+<div id="summary"></div>
+<pre id="log" class="log"></pre>
+<h2>גלריה: תרגיל אחד מכל תבנית</h2>
+<div id="gallery" class="gal"></div>
+
+<script src="../common/csharp.js"></script>
+<script src="../common/core.js"></script>
+<script>
+(async function () {
+  const lines = [], log = s => lines.push(s);
+  const fetchText = async u => (await fetch(u, { cache: 'no-store' })).text();
+  const html = await fetchText('index.html');
+  const sc = document.createElement('script');
+  sc.textContent = new DOMParser().parseFromString(html, 'text/html').getElementById('engine').textContent;
+  document.head.appendChild(sc);
+  const E = window.Engine, T = E.TEMPLATES, N = +(new URLSearchParams(location.search).get('n') || 200);
+  const { parseProgram, parseExpr, check, run, literal, CSError } = CS;
+
+  let pass = 0, fail = 0;
+  const failures = [];
+  function ok(cond, msg) { if (cond) pass++; else { fail++; if (failures.length < 40) failures.push(msg); } }
+
+  // ---------- גרסה וקישורים ----------
+  const verOf = h => (/const VERSION = '([^']+)'/.exec(h) || [])[1];
+  const landing = await fetchText('../index.html');
+  ok(verOf(landing) === E.VERSION, `version: landing ${verOf(landing)} vs module ${E.VERSION}`);
+  ok(landing.includes('href="recursion/index.html"'), 'landing links to recursion/index.html');
+  ok(html.includes('href="../index.html"'), 'module links back to ../index.html');
+
+  // ---------- תבניות ----------
+  const ids = new Set();
+  for (const t of T) {
+    ok(!ids.has(t.id), 'duplicate template id ' + t.id); ids.add(t.id);
+    ok(t.level >= 1 && t.level <= E.MAX_LEVEL, `${t.id}: level ${t.level}`);
+    ok(['num', 'str', 'arr'].includes(t.topic), `${t.id}: topic ${t.topic}`);
+    let prog;
+    try { prog = E.progOf(t); } catch (e) { ok(false, `${t.id}: parse error: ${e.message}`); continue; }
+    // הכנה לשלב ההשלמה: כל «...» הוא ביטוי, וקוד עם חורים ממולאים מתנהג כמו הקוד המקורי
+    const sols = [];
+    const tpl = t.code.trim().replace(/\$F/g, 'F').replace(/\$G/g, 'G').replace(/«([^»]*)»/g, (m, x) => { sols.push(x); return '@' + sols.length; });
+    ok(sols.length >= 1, `${t.id}: has blanks`);
+    try {
+      const p2 = parseProgram(tpl), blanks = {};
+      sols.forEach((x, i) => (blanks[i + 1] = parseExpr(x)));
+      check(p2, blanks);
+      const rng = Core.makeRng(7);
+      for (let i = 0; i < 20; i++) {
+        const args = t.args(rng), a2 = args.map(a => (Array.isArray(a) ? CS.arr(a.elem, a) : a));
+        const r1 = run(prog, 'F', args), r2 = run(p2, 'F', a2, { blanks });
+        ok(literal(r1.value) === literal(r2.value) && r1.out === r2.out, `${t.id}: blanks version differs`);
+      }
+    } catch (e) { ok(false, `${t.id}: blanks: ${e.message}`); }
+  }
+  ok(T.length >= 40, `template count ${T.length}`);
+
+  // ---------- תרגילים ----------
+  const qCount = { ret: 0, out: 0, calls: 0 };
+  const forms = (ex) => {   // צורות כתיבה נכונות של התשובה
+    if (ex.q === 'out') return [ex.out, ex.out.trim(), ex.out.replace(/ /g, '  ')];
+    if (ex.q === 'calls') return [String(ex.calls), ` ${ex.calls} `];
+    const v = ex.value;
+    if (ex.ret === 'bool') return [String(v), v ? 'True' : 'False', v ? 'TRUE' : 'false'.toUpperCase()];
+    if (ex.ret === 'string') return [literal(v), v === '' ? '""' : v];
+    if (ex.ret === 'char') return [literal(v), String.fromCharCode(v.c)];
+    return [String(v)];
+  };
+  const wrongs = ex => {
+    if (ex.q === 'out') return [ex.out.trim() + ' 9', 'x'];
+    if (ex.q === 'calls') return [String(ex.calls + 1)];
+    const v = ex.value;
+    if (ex.ret === 'bool') return [String(!v)];
+    if (ex.ret === 'string') return [v + 'x'];
+    return [String(v + 1), String(-v - 1)];
+  };
+  for (const t of T) {
+    const seen = new Set();
+    for (let i = 0; i < N; i++) {
+      let ex;
+      try { ex = E.makeExercise({ template: t.id, level: t.level, seed: 1000 + i }); }
+      catch (e) { ok(false, `${t.id} seed ${1000 + i}: ${e.message}`); continue; }
+      qCount[ex.q]++;
+      seen.add(ex.q === 'out' ? ex.out : literal(ex.value));
+      ok(ex.code.includes(ex.name) && !/[«»$]/.test(ex.code), `${t.id}: code names`);
+      ok(ex.q !== 'out' || ex.out.trim().length > 0, `${t.id}: empty output`);
+      const a = E.answerSpec(ex);
+      for (const f of forms(ex)) { const r = a.check(f, 1); ok(r.ok === true, `${t.id} #${ex.seed} (${ex.q}): "${f}" should be correct, got ${JSON.stringify(r)}`); }
+      for (const w of wrongs(ex)) { const r = a.check(w, 1); ok(!r.ok, `${t.id} #${ex.seed} (${ex.q}): "${w}" should be wrong`); }
+      ok(E.traceLines(ex).length >= 1, `${t.id}: trace`);
+      // אותו seed, אותו תרגיל
+      const ex2 = E.makeExercise({ template: t.id, level: t.level, seed: 1000 + i });
+      ok(ex2.code === ex.code && ex2.call === ex.call && ex2.q === ex.q, `${t.id}: seed ${ex.seed} not reproducible`);
+    }
+    // תבניות bool ותבניות עם טווח קלט צר בכוונה (fib, printRuler) נותנות 2–3 תשובות שונות
+    ok(seen.size >= Math.min(2, N), `${t.id}: only ${seen.size} different answers`);
+    // bool: גם true וגם false
+    if (E.progOf(t).funcs.F.ret === 'bool') ok(seen.has('true') && seen.has('false'), `${t.id}: bool answers not mixed: ${[...seen]}`);
+  }
+  ok(qCount.ret > 0 && qCount.out > 0 && qCount.calls > 0, `question kinds: ${JSON.stringify(qCount)}`);
+
+  // ---------- בדיקת תשובה: קלט לא תקין לא נספר ----------
+  {
+    const int = E.makeExercise({ template: 'sumDigits', level: 2, seed: 1 }), sa = E.answerSpec(int);
+    ok(sa.check('abc').invalid && sa.check('').invalid && sa.check('1.5').invalid, 'int: invalid input is not counted');
+    const b = E.makeExercise({ template: 'isPal', level: 3, seed: 1 }), ba = E.answerSpec(b);
+    ok(ba.check('yes').invalid && ba.check('1').invalid, 'bool: invalid input is not counted');
+    const s = E.makeExercise({ template: 'reverse', level: 3, seed: 1 }), sa2 = E.answerSpec(s);
+    ok(sa2.check('').invalid, 'string: empty input is not counted');
+    ok(sa2.check(s.value.toUpperCase()).hint, 'string: case hint');
+    const o = E.makeExercise({ template: 'printBinary', level: 3, seed: 3 }), oa = E.answerSpec(o);
+    ok(oa.check(o.out.split('').join(' ')).invalid, 'output: same characters with different spaces is not counted');
+  }
+
+  // ---------- רמות ונושאים ----------
+  ok(E.minLevel(['num']) === 1 && E.minLevel(['str']) === 3 && E.minLevel(['arr']) === 3 && E.minLevel(['num', 'str']) === 1, 'minLevel');
+  for (let L = 1; L <= 5; L++) {
+    for (const tp of [['num', 'str', 'arr'], ['num'], ['str'], ['arr'], ['str', 'arr']]) {
+      if (E.minLevel(tp) > L) continue;
+      const rng = Core.makeRng(L * 31 + tp.length), cnt = {};
+      let cur = 0;
+      const M = 600;
+      for (let i = 0; i < M; i++) {
+        const t = E.pickTemplate(rng, L, tp, null);
+        ok(t.level <= L, `L${L} ${tp}: template ${t.id} above level`);
+        ok(tp.includes(t.topic), `L${L} ${tp}: topic ${t.topic}`);
+        cnt[t.id] = (cnt[t.id] || 0) + 1;
+        const top = Math.max(...T.filter(x => tp.includes(x.topic) && x.level <= L).map(x => x.level));
+        if (t.level === top) cur++;
+      }
+      const lower = T.some(x => tp.includes(x.topic) && x.level < L);
+      if (lower) ok(Math.abs(cur / M - 0.6) < 0.07, `L${L} ${tp}: current-level share ${(cur / M).toFixed(2)}`);
+    }
+  }
+  {
+    // לא אותה תבנית פעמיים ברצף (כשיש יותר מאחת)
+    const rng = Core.makeRng(5);
+    let prev = null, rep = 0;
+    for (let i = 0; i < 300; i++) { const t = E.pickTemplate(rng, 3, ['num', 'str', 'arr'], prev); if (t.id === prev) rep++; prev = t.id; }
+    ok(rep === 0, `same template twice in a row: ${rep}`);
+  }
+  // רמה 3 ומעלה: שאלות "כמה קריאות" מופיעות; ברמה 1–2 לא
+  {
+    let c12 = 0, c3 = 0;
+    for (let i = 0; i < 300; i++) {
+      if (E.makeExercise({ level: 2, topics: ['num'], seed: i }).q === 'calls') c12++;
+      if (E.makeExercise({ level: 4, topics: ['num'], seed: i }).q === 'calls') c3++;
+    }
+    ok(c12 === 0 && c3 > 20, `calls questions: level 2 ${c12}, level 4 ${c3}`);
+  }
+
+  // ---------- ביצועים ----------
+  {
+    const t0 = performance.now();
+    for (let i = 0; i < 300; i++) E.makeExercise({ level: 1 + (i % 5), seed: i });
+    const ms = (performance.now() - t0) / 300;
+    ok(ms < 15, `makeExercise ${ms.toFixed(2)} ms`);
+    log(`makeExercise: ${ms.toFixed(2)} ms average`);
+  }
+
+  document.getElementById('summary').innerHTML = fail
+    ? `<span class="fail">${fail} נכשלו</span>, ${pass} עברו`
+    : `<span class="pass">כל ${pass} הבדיקות עברו</span>`;
+  document.getElementById('log').textContent = failures.map(f => '✗ ' + f).concat(lines).join('\n');
+
+  // ---------- גלריה ----------
+  const gal = document.getElementById('gallery');
+  for (const t of T) {
+    const ex = E.makeExercise({ template: t.id, level: t.level, seed: 42 });
+    const a = E.answerSpec(ex);
+    const fig = document.createElement('figure');
+    fig.innerHTML = `<figcaption>${t.id} · רמה ${t.level} · ${E.TOPIC_NAMES[t.topic]} · #${ex.seed}</figcaption>`
+      + Core.codeHtml(ex.code) + `<p>${E.questionHtml(ex)}</p><p>התשובה: ${a.shown}</p>`
+      + `<details><summary>מעקב</summary>${E.traceHtml(ex)}</details>`;
+    gal.appendChild(fig);
+  }
+})();
+</script>
+</body>
+</html>
