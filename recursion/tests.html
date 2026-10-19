@@ -169,6 +169,110 @@
     ok(c12 === 0 && c3 > 20, `calls questions: level 2 ${c12}, level 4 ${c3}`);
   }
 
+  // ---------- השלמת קוד ----------
+  for (const t of T) {
+    const sp = E.SPEC[t.id];
+    if (!sp) { ok(false, `${t.id}: no SPEC`); continue; }
+    const nParams = E.progOf(t).funcs.F.params.length;
+    ok(sp.doc && sp.doc.length > 20, `${t.id}: doc`);
+    ok(sp.edge.length >= 2, `${t.id}: edge count`);
+    for (const a of sp.edge) {
+      ok(a.length === nParams, `${t.id}: edge ${a.map(literal)} has ${a.length} args`);
+      try { const r = run(E.progOf(t), 'F', a.map(x => (Array.isArray(x) ? CS.arr(x.elem, x) : x))); ok(r.calls <= 200, `${t.id}: edge calls ${r.calls}`); }
+      catch (e) { ok(false, `${t.id}: edge ${a.map(literal)}: ${e.message}`); }
+    }
+  }
+  {
+    let nEx = 0, t0 = performance.now(), checks = 0;
+    for (const t of T) for (let L = 1; L <= 5; L++) for (let i = 0; i < Math.max(2, N / 20); i++) {
+      const ex = E.makeExercise({ template: t.id, level: L, seed: 500 + i, mode: 'fill' });
+      nEx++;
+      const want = Math.min(E.solsOf(t).length, E.BLANKS_BY_LEVEL[L - 1]);
+      ok(ex.mode === 'fill' && ex.sols.length === want, `${t.id} L${L}: ${ex.sols.length} blanks, want ${want}`);
+      for (let k = 1; k <= want; k++) ok(ex.code.includes('@' + k), `${t.id}: @${k} missing`);
+      ok(!ex.code.includes('@' + (want + 1)) && !/[«»$]/.test(ex.code), `${t.id}: code markers`);
+      ok(ex.tests.length >= E.SPEC[t.id].edge.length, `${t.id}: tests ${ex.tests.length}`);
+      const r = E.checkFill(ex, ex.sols, 1); checks++;
+      ok(r.ok === true, `${t.id} L${L} #${ex.seed}: solution rejected: ${JSON.stringify(r)}`);
+      ok(E.checkFill(ex, ex.sols.map(() => ''), 1).invalid, `${t.id}: empty blanks should be invalid`);
+      const ex2 = E.makeExercise({ template: t.id, level: L, seed: 500 + i, mode: 'fill' });
+      ok(ex2.code === ex.code && ex2.tests.length === ex.tests.length, `${t.id}: fill not reproducible`);
+    }
+    log(`fill: ${nEx} exercises, checkFill ${((performance.now() - t0) / checks).toFixed(2)} ms per exercise (generate + check)`);
+  }
+  // מוטציות: תשובה שגויה בחור אחד (והשאר נכונים) צריכה להיתפס
+  {
+    const MUT = [[/<=/, '<'], [/(?<![<>=!])<(?!=)/, '<='], [/>=/, '>'], [/(?<![<>=!-])>(?!=)/, '>='], [/==/, '!='], [/!=/, '=='],
+      [/ \+ /, ' - '], [/ - /, ' + '], [/ \* /, ' + '], [/ \/ /, ' % '], [/ % /, ' / '], [/&&/, '||'], [/\|\|/, '&&'],
+      [/\btrue\b/, 'false'], [/\bfalse\b/, 'true'], [/\b(\d+)\b/, m => String(+m + 1)]];
+    let total = 0, caught = 0;
+    const missed = [];
+    for (const t of T) {
+      const ex = E.makeExercise({ template: t.id, level: 5, seed: 77, mode: 'fill', allBlanks: true });
+      ex.sols.forEach((sol, bi) => {
+        for (const [re, rep] of MUT) {
+          if (!re.test(sol)) continue;
+          const mut = sol.replace(re, rep);
+          if (mut === sol) continue;
+          total++;
+          const vals = ex.sols.slice(); vals[bi] = mut;
+          const r = E.checkFill(ex, vals, 1);
+          if (!r.ok) caught++; else missed.push(`${t.id} #${bi + 1}: ${sol} → ${mut}`);
+        }
+      });
+    }
+    ok(caught / total >= 0.85, `mutations caught ${caught}/${total}`);
+    log(`mutations caught: ${caught}/${total}` + (missed.length ? '\n  not caught (may be equivalent):\n  ' + missed.join('\n  ') : ''));
+  }
+  // תשובות שקולות מתקבלות
+  {
+    const alt = (id, vals) => {
+      const ex = E.makeExercise({ template: id, level: 5, seed: 3, mode: 'fill', allBlanks: true });
+      const v = vals.map(x => x.replace(/\bF\b/g, ex.name).replace(/\bG\b/g, ex.helperName));
+      const r = E.checkFill(ex, v, 1);
+      ok(r.ok === true, `${id}: equivalent ${vals.join(' ; ')} rejected: ${JSON.stringify(r)}`);
+    };
+    alt('sumTo', ['n < 1', '0', 'F(n - 1) + n']);
+    alt('sumDigits', ['n <= 9', 'n % 10', 'F(n / 10) + n % 10']);
+    alt('fact', ['n <= 1', '1', 'F(n - 1) * n']);
+    alt('countChar', ['s == ""', '0', 's[0] == c', 'F(s.Substring(1), c) + 1', 'F(s.Substring(1, s.Length - 1), c)']);
+    alt('isPal', ['s.Length < 2', 'true', "s[0] != s[s.Length - 1]", 'false', 'F(s.Substring(1, s.Length - 2))']);
+    alt('arrSum', ['i >= arr.Length', '0', 'F(arr, i + 1) + arr[i]']);
+    alt('hasDigit', ['n <= 0', 'false', 'd == n % 10', 'true', 'F(n / 10, d)']);
+  }
+  // משוב
+  {
+    const ex = E.makeExercise({ template: 'sumDigits', level: 5, seed: 3, mode: 'fill', allBlanks: true });
+    const F = ex.name, good = ex.sols;
+    const r1 = E.checkFill(ex, ['n < 10', '0', `n % 10 + ${F}(n / 10)`], 1);
+    ok(r1.ok === false && !r1.hint, 'wrong value, attempt 1: no hint');
+    const r2 = E.checkFill(ex, ['n < 10', '0', `n % 10 + ${F}(n / 10)`], 2);
+    ok(r2.ok === false && /במקום/.test(r2.hint || ''), 'wrong value, attempt 2: targeted hint: ' + r2.hint);
+    const r3 = E.checkFill(ex, ['n < 10', 'n', `n % 10 + ${F}(n)`], 1);
+    ok(r3.ok === false && /לא נעצרת/.test(r3.hint || ''), 'infinite recursion hint on attempt 1: ' + r3.hint);
+    const r4 = E.checkFill(ex, ['n < 10', 'n', `n % 10 + ${F}(n / 10`], 1);
+    ok(r4.invalid && /חור 3/.test(r4.invalid), 'syntax error is not counted and names the blank: ' + r4.invalid);
+    const r5 = E.checkFill(ex, ['x < 10', 'n', good[2]], 1);
+    ok(r5.invalid && /חור 1/.test(r5.invalid) && /x/.test(r5.invalid), 'undefined name is not counted: ' + r5.invalid);
+    const r6 = E.checkFill(ex, ['n < 10', 'n', `n % 10 + What2(n / 10)`], 1);
+    ok(r6.invalid, 'unknown function is not counted: ' + r6.invalid);
+    const r7 = E.checkFill(ex, ['n = 0', 'n', good[2]], 1);
+    ok(r7.ok === false && /bool/.test(r7.hint || ''), 'assignment as condition gives a runtime type message: ' + r7.hint);
+    const ex1 = E.makeExercise({ template: 'sumDigits', level: 1, seed: 3, mode: 'fill' });
+    const r8 = E.checkFill(ex1, ['n;'], 1);
+    ok(r8.invalid && !/חור \d/.test(r8.invalid),'single blank: message without blank number: ' + r8.invalid);
+    const ev = E.makeExercise({ template: 'printDigits', level: 5, seed: 3, mode: 'fill', allBlanks: true });
+    const r9 = E.checkFill(ev, ['n > 0', 'n / 100'], 2);
+    ok(r9.ok === false && /מדפיסה/.test(r9.hint || ''), 'void: printed-output hint: ' + r9.hint);
+  }
+  // שילוב סוגים: שניהם מופיעים כששניהם נבחרו
+  {
+    const c = { trace: 0, fill: 0 };
+    for (let i = 0; i < 200; i++) c[E.makeExercise({ level: 3, topics: ['num', 'str', 'arr'], modes: ['trace', 'fill'], seed: i }).mode]++;
+    ok(c.trace > 60 && c.fill > 60, `mode mix ${JSON.stringify(c)}`);
+    ok([...Array(50).keys()].every(i => E.makeExercise({ level: 2, modes: ['fill'], seed: i }).mode === 'fill'), 'fill only');
+  }
+
   // ---------- ביצועים ----------
   {
     const t0 = performance.now();
@@ -192,6 +296,9 @@
     fig.innerHTML = `<figcaption>${t.id} · רמה ${t.level} · ${E.TOPIC_NAMES[t.topic]} · #${ex.seed}</figcaption>`
       + Core.codeHtml(ex.code) + `<p>${E.questionHtml(ex)}</p><p>התשובה: ${a.shown}</p>`
       + `<details><summary>מעקב</summary>${E.traceHtml(ex)}</details>`;
+    const fx = E.makeExercise({ template: t.id, level: 5, seed: 42, mode: 'fill' });
+    fig.innerHTML += `<hr><p>${E.introHtml(fx)}</p>` + E.fillCodeHtml(fx)
+      + `<details><summary>פתרון השלמה</summary>${E.fillSolutionHtml(fx)}</details>`;
     gal.appendChild(fig);
   }
 })();

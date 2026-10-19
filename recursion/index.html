@@ -31,6 +31,11 @@
       <label class="opt"><input type="checkbox" name="topic" value="str" checked> מחרוזות</label>
       <label class="opt"><input type="checkbox" name="topic" value="arr" checked> מערכים</label>
     </fieldset>
+    <fieldset>
+      <legend>סוגי תרגילים</legend>
+      <label class="opt"><input type="checkbox" name="mode" value="trace" checked> מעקב</label>
+      <label class="opt"><input type="checkbox" name="mode" value="fill" checked> השלמת קוד</label>
+    </fieldset>
     <p id="setNote" class="note"></p>
     <button id="start" class="primary">התחלה</button>
   </section>
@@ -47,7 +52,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = 'v0.2';
+  const VERSION = 'v0.3';
   const MAX_LEVEL = 5;
   const MAX_ATTEMPTS = 3;
   const MAX_TRIES = 60;   // הגרלות קלט עד תרגיל שמתאים למגבלות
@@ -471,6 +476,57 @@ public static int $F(int[] arr, int lo, int hi)
   const NAMES = ['What', 'Secret', 'Mystery', 'Sod', 'Something', 'Calc', 'Func', 'Magic'];
   const HELPERS = ['Help', 'Aux', 'Inner', 'Check'];
 
+  /* ---------------- טענות יציאה וקלטי קצה ----------------
+   * doc: מה הפעולה עושה (מוצג בתרגיל השלמה). `...` = קוד; $F/$G = שמות הפעולות.
+   * edge: קלטים שתמיד נבדקים בהשלמת קוד, בנוסף לקלטים אקראיים מ-args. כולם בתוך תנאי הכניסה של doc.
+   */
+  const A = (...xs) => arr('int', xs);
+  const SPEC = {
+    sumTo: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומחזירה את הסכום `0 + 1 + 2 + ... + n`.', edge: [[0], [1]] },
+    fact: { doc: 'מקבלת מספר שלם `n` (`n >= 1`) ומחזירה את העצרת `1 * 2 * ... * n`.', edge: [[1], [2]] },
+    sumStep2: { doc: 'מקבלת מספר שלם `n` ומחזירה את הסכום `n + (n-2) + (n-4) + ...` של האיברים החיוביים בלבד. אם `n <= 0`, מחזירה 0.', edge: [[0], [1], [2], [-3]] },
+    pow2: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומחזירה את 2 בחזקת `n`.', edge: [[0], [1]] },
+    squares: { doc: 'מקבלת מספר שלם `n` (`n >= 1`) ומחזירה את `n * n`, כסכום המספרים האי-זוגיים `1 + 3 + 5 + ... + (2n - 1)`.', edge: [[1], [2]] },
+    sumDigits: { doc: 'מקבלת מספר שלם חיובי `n` ומחזירה את סכום הספרות שלו.', edge: [[5], [10], [909]] },
+    countDigits: { doc: 'מקבלת מספר שלם חיובי `n` ומחזירה את מספר הספרות שלו.', edge: [[7], [10], [100000]] },
+    maxDigit: { doc: 'מקבלת מספר שלם חיובי `n` ומחזירה את הספרה הגדולה ביותר בו.', edge: [[3], [10], [90], [19]] },
+    hasDigit: { doc: 'מקבלת מספר שלם חיובי `n` וספרה `d`, ומחזירה `true` אם `d` מופיעה ב-`n`, אחרת `false`.', edge: [[7, 7], [7, 3], [100, 1], [105, 0]] },
+    countDigit: { doc: 'מקבלת מספר שלם חיובי `n` וספרה `d` (בין 1 ל-9), ומחזירה כמה פעמים `d` מופיעה ב-`n`.', edge: [[5, 5], [123, 4], [55, 5]] },
+    allEven: { doc: 'מקבלת מספר שלם חיובי `n` ומחזירה `true` אם כל הספרות שלו זוגיות, אחרת `false`.', edge: [[8], [7], [10], [20], [21], [12]] },
+    power: { doc: 'מקבלת שני מספרים שלמים `b` ו-`e` (`e >= 0`) ומחזירה את `b` בחזקת `e`.', edge: [[3, 0], [5, 1], [0, 2]] },
+    mult: { doc: 'מקבלת שני מספרים שלמים `a` ו-`b` (`b >= 0`) ומחזירה את המכפלה `a * b`, בעזרת חיבור בלבד.', edge: [[4, 0], [0, 3], [7, 1]] },
+    divSub: { doc: 'מקבלת מספר שלם `a >= 0` ומספר שלם `b > 0`, ומחזירה את המנה השלמה `a / b`, בעזרת חיסור בלבד.', edge: [[0, 3], [5, 5], [4, 5], [10, 1]] },
+    modSub: { doc: 'מקבלת מספר שלם `a >= 0` ומספר שלם `b > 0`, ומחזירה את השארית `a % b`, בעזרת חיסור בלבד.', edge: [[0, 3], [5, 5], [4, 5], [10, 1]] },
+    gcd: { doc: 'מקבלת שני מספרים שלמים חיוביים `a` ו-`b`, ומחזירה את המחלק המשותף הגדול ביותר שלהם.', edge: [[7, 7], [12, 5], [5, 12], [9, 3]] },
+    countChar: { doc: 'מקבלת מחרוזת `s` ותו `c`, ומחזירה כמה פעמים `c` מופיע ב-`s`.', edge: [['', ch('a')], ['a', ch('a')], ['bbb', ch('a')], ['ab', ch('b')]] },
+    reverse: { doc: 'מקבלת מחרוזת `s` ומחזירה אותה בסדר הפוך.', edge: [[''], ['x'], ['ab']] },
+    removeChar: { doc: 'מקבלת מחרוזת `s` ותו `c`, ומחזירה את `s` בלי כל המופעים של `c`.', edge: [['', ch('a')], ['aaa', ch('a')], ['b', ch('a')], ['bab', ch('a')]] },
+    isPal: { doc: 'מקבלת מחרוזת `s` ומחזירה `true` אם היא פלינדרום (נקראת אותו דבר משני הכיוונים), אחרת `false`.', edge: [[''], ['a'], ['ab'], ['aa'], ['aba'], ['abca']] },
+    arrSum: { doc: 'מקבלת מערך `arr` ומספר `i` (בין 0 ל-`arr.Length`), ומחזירה את סכום האיברים מהמקום `i` ועד סוף המערך.', edge: [[A(5), 0], [A(5), 1], [A(1, 2), 2], [A(1, 2), 1]] },
+    arrMax: { doc: 'מקבלת מערך `arr` ומספר `i` (בין 0 ל-`arr.Length - 1`), ומחזירה את האיבר הגדול ביותר מהמקום `i` ועד סוף המערך.', edge: [[A(5), 0], [A(3, 9, 2), 2], [A(9, 3), 0], [A(3, 9), 0]] },
+    arrCountEven: { doc: 'מקבלת מערך `arr` ומספר `i` (בין 0 ל-`arr.Length`), ומחזירה כמה איברים זוגיים יש מהמקום `i` ועד סוף המערך.', edge: [[A(), 0], [A(2), 0], [A(1, 3), 0], [A(2, 4), 1]] },
+    printDigitsRev: { doc: 'מקבלת מספר שלם חיובי `n` ומדפיסה את הספרות שלו מהאחרונה לראשונה, עם רווח אחרי כל ספרה.', edge: [[7], [10], [120]] },
+    printDigits: { doc: 'מקבלת מספר שלם חיובי `n` ומדפיסה את הספרות שלו מהראשונה לאחרונה, עם רווח אחרי כל ספרה.', edge: [[7], [10], [120]] },
+    printUp: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומדפיסה את המספרים מ-1 עד `n` בסדר עולה, עם רווח אחרי כל מספר.', edge: [[0], [1], [2]] },
+    printBinary: { doc: 'מקבלת מספר שלם חיובי `n` ומדפיסה את הייצוג שלו בבסיס 2.', edge: [[1], [2], [8], [5]] },
+    printRevStr: { doc: 'מקבלת מחרוזת `s` ומדפיסה את התווים שלה בסדר הפוך.', edge: [[''], ['a'], ['ab']] },
+    removeDigits: { doc: 'מקבלת מחרוזת `s` ומחזירה את `s` בלי הספרות שבה.', edge: [[''], ['12'], ['a1b'], ['ab']] },
+    fib: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומחזירה את האיבר ה-`n` בסדרת פיבונאצ\'י `0, 1, 1, 2, 3, 5, 8, ...` (האיבר ה-0 הוא 0).', edge: [[0], [1], [2], [7]] },
+    halfOrMinus: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומחזירה כמה צעדים צריך כדי להגיע ממנו ל-0, כשבכל צעד מספר זוגי מתחלק ב-2, ומספר אי-זוגי קטן ב-1.', edge: [[0], [1], [2], [16], [7]] },
+    printBeforeAfter: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומדפיסה את המספרים מ-`n` עד 1 ואחר כך מ-1 עד `n`, עם רווח אחרי כל מספר. למשל עבור 2: `2 1 1 2`.', edge: [[0], [1], [2]] },
+    printRuler: { doc: 'מקבלת מספר שלם `n` (`n >= 0`) ומדפיסה "סרגל": הפלט עבור `n - 1`, אחריו `n` ורווח, ואחריו שוב הפלט עבור `n - 1`. למשל עבור 2: `1 2 1`.', edge: [[0], [1], [2]] },
+    binom: { doc: 'מקבלת `n` ו-`k` (`0 <= k <= n`) ומחזירה בכמה דרכים אפשר לבחור `k` איברים מתוך `n`. מתקיים: מספר הדרכים עבור `(n, k)` שווה לסכום מספרי הדרכים עבור `(n-1, k-1)` ועבור `(n-1, k)`.', edge: [[3, 0], [3, 3], [1, 1], [4, 2]] },
+    revAcc: { doc: 'מקבלת `n >= 0` ו-`acc`, ומחזירה את `acc` שאחריו נכתבות הספרות של `n` בסדר הפוך. למשל `$F(123, 0)` מחזירה 321, ו-`$F(12, 5)` מחזירה 521.', edge: [[0, 0], [5, 0], [12, 3], [120, 0]] },
+    swapEnds: { doc: 'מקבלת מחרוזת `s` ומחזירה אותה בסדר הפוך. בכל שלב היא מטפלת בשני הקצוות, ואת האמצע הופכת בקריאה רקורסיבית.', edge: [[''], ['a'], ['ab'], ['abc']] },
+    adjacentPairs: { doc: 'מקבלת מחרוזת `s` ומספר `i` (`i >= 0`), ומחזירה בכמה מקומות, מהמקום `i` והלאה, יש תו ששווה לתו שאחריו.', edge: [['', 0], ['a', 0], ['aa', 0], ['aab', 1], ['aab', 0]] },
+    arrMaxIndex: { doc: 'מקבלת מערך `arr` ומספר `i` (בין 0 ל-`arr.Length - 1`), ומחזירה את האינדקס של האיבר הגדול ביותר מהמקום `i` ועד הסוף. אם הוא מופיע כמה פעמים, מחזירה את האינדקס האחרון מביניהם.', edge: [[A(4), 0], [A(2, 2), 0], [A(1, 5, 3), 0], [A(9, 5, 3), 0], [A(1, 5, 3), 2]] },
+    palHelper: { doc: '`$F` מקבלת מחרוזת `s` ומחזירה `true` אם היא פלינדרום, אחרת `false`. היא נעזרת ב-`$G`, שבודקת את חלק המחרוזת שבין המקומות `lo` ו-`hi`.', edge: [[''], ['a'], ['ab'], ['aba'], ['abca']] },
+    sortedHelper: { doc: '`$F` מקבלת מערך ומחזירה `true` אם הוא ממוין בסדר עולה (כל איבר קטן או שווה לאיבר שאחריו), אחרת `false`. היא נעזרת ב-`$G`, שבודקת מהמקום `i` והלאה.', edge: [[A()], [A(1)], [A(2, 1)], [A(1, 1)], [A(1, 3, 2)]] },
+    mutual: { doc: '`$F` מחזירה `true` אם `n` (`n >= 0`) זוגי, ו-`$G` מחזירה `true` אם `n` אי-זוגי. כל אחת נעזרת בשנייה.', edge: [[0], [1], [2]] },
+    descents: { doc: 'מקבלת מספר שלם חיובי `n` ומחזירה בכמה מקומות יש ב-`n` ספרה שגדולה מהספרה שמימינה. למשל עבור 5213 התשובה היא 2.', edge: [[5], [10], [21], [12], [321], [111]] },
+    halvesSum: { doc: 'מקבלת מערך `arr` ושני מקומות `lo <= hi`, ומחזירה את סכום האיברים מ-`lo` עד `hi` (כולל). היא מחלקת את הקטע לשני חצאים.', edge: [[A(5), 0, 0], [A(1, 2), 0, 1], [A(1, 2, 3), 1, 2], [A(4, 5, 6), 0, 2]] },
+  };
+
   // הקוד להצגה: שמות פעולות, בלי סימוני חורים
   const codeOf = (t, F, G) => t.code.trim().replace(/\$F/g, F).replace(/\$G/g, G).replace(/[«»]/g, '');
   const progCache = new Map();
@@ -496,12 +552,15 @@ public static int $F(int[] arr, int lo, int hi)
   const countCalls = (node, name) => (node.name === name ? 1 : 0) + node.children.reduce((s, c) => s + countCalls(c, name), 0);
   const callText = (name, args) => `${name}(${args.map(a => (Array.isArray(a) ? 'arr' : literal(a))).join(', ')})`;
 
+  // o: { level, topics, modes (['trace','fill'], ברירת מחדל: מעקב בלבד), prevKind, seed?, template? }
   function makeExercise(o) {
     const seed = o.seed !== undefined ? o.seed : randomSeed();
     const rng = makeRng(seed);
     const t = o.template ? BY_ID[o.template] : pickTemplate(rng, o.level, o.topics || ['num', 'str', 'arr'], o.prevKind);
     const prog = progOf(t), ret = prog.funcs.F.ret, helper = /\$G/.test(t.code);
     const F = rng.pick(NAMES), G = rng.pick(HELPERS);
+    const mode = o.mode || rng.pick(o.modes || ['trace']);
+    if (mode === 'fill') return makeFill(t, rng, { ...o, level: o.level || t.level }, seed, F, G, ret);
     // מעקב: ערך מוחזר / פלט, ומרמה 3 לפעמים "כמה קריאות" (רק בפעולה אחת שקוראת לעצמה)
     const q = ret === 'void' ? 'out' : o.level >= 3 && !helper && rng.next() < 0.3 ? 'calls' : 'ret';
     for (let i = 0; i < MAX_TRIES; i++) {
@@ -514,7 +573,7 @@ public static int $F(int[] arr, int lo, int hi)
       if (q === 'out' && !r.out.trim()) continue;
       const arrArg = args.find(Array.isArray);
       return {
-        kind: t.id, seed, level: o.level || t.level, tlevel: t.level, topic: t.topic, q, ret, helper,
+        mode: 'trace', kind: t.id, seed, level: o.level || t.level, tlevel: t.level, topic: t.topic, q, ret, helper,
         name: F, helperName: G, code: codeOf(t, F, G), args,
         call: callText(F, args), decl: arrArg ? `int[] arr = ${literal(arrArg)};` : null,
         value: v, out: r.out, calls: q === 'calls' ? countCalls(r.tree, 'F') : r.calls, tree: r.tree,
@@ -606,9 +665,111 @@ public static int $F(int[] arr, int lo, int hi)
     return `<p class="muted">${legend}</p><div class="trace" dir="ltr">${traceLines(ex).join('\n')}</div>${end}`;
   }
 
+  // ---------------- השלמת קוד ----------------
+  // מספר החורים לפי רמת התלמיד (לא יותר ממה שיש בתבנית). החורים נבחרים באקראי מתוך «...» של התבנית.
+  const BLANKS_BY_LEVEL = [1, 2, 2, 3, 3];
+  const N_RANDOM_TESTS = 8;      // קלטים אקראיים בנוסף ל-edge
+  const CHECK_STEPS = 200000;    // מגבלת צעדים לכל הרצה של תשובת התלמיד
+  const cloneArg = a => (Array.isArray(a) ? arr(a.elem, a) : a);
+  const solsOf = t => [...t.code.matchAll(/«([^»]*)»/g)].map(m => m[1]);
+  // קריאה להצגה בתוך משפט: מערך נכתב כ-{1, 2}
+  const callInline = (name, args) => `${name}(${args.map(literal).join(', ')})`;
+  // טענת היציאה כ-HTML: `...` הוא קוד
+  const docHtml = (doc, F, G) => doc.split('`').map((p, i) => {
+    const s = p.replace(/\$F/g, F).replace(/\$G/g, G);
+    return i % 2 ? inlineCode(s) : esc(s);
+  }).join('');
+
+  function makeFill(t, rng, o, seed, F, G, ret) {
+    const sols = solsOf(t);
+    const k = o.allBlanks ? sols.length : Math.min(sols.length, BLANKS_BY_LEVEL[o.level - 1]);   // allBlanks: לבדיקות
+    const chosen = rng.shuffle([...sols.keys()]).slice(0, k).sort((a, b) => a - b);
+    const named = s => s.replace(/\$F/g, F).replace(/\$G/g, G);
+    let j = -1, bi = 0;
+    // הקוד עם @1, @2 ... במקום החורים שנבחרו; שאר «...» מוצגים כרגיל
+    const code = named(t.code.trim().replace(/«([^»]*)»/g, (m, x) => (chosen.includes(++j) ? '@' + ++bi : x)));
+    // הקלטים: קלטי הקצה ואחריהם קלטים אקראיים (מחולל נפרד מה-seed)
+    const ref = parseProgram(codeOf(t, F, G)), trng = makeRng((seed ^ 0x9E3779B9) >>> 0);
+    const tests = [], keys = new Set();
+    for (const args of SPEC[t.id].edge.concat(Array.from({ length: N_RANDOM_TESTS }, () => t.args(trng)))) {
+      const key = args.map(literal).join(',');
+      if (keys.has(key)) continue;
+      keys.add(key);
+      const r = run(ref, F, args.map(cloneArg));
+      tests.push({ args, call: callInline(F, args), value: r.value, out: r.out });
+    }
+    return {
+      mode: 'fill', kind: t.id, seed, level: o.level, tlevel: t.level, topic: t.topic, ret, name: F, helperName: G,
+      code, sols: chosen.map(i => named(sols[i])), doc: docHtml(SPEC[t.id].doc, F, G), tests,
+    };
+  }
+  const fillProg = ex => ex.prog || (ex.prog = parseProgram(ex.code));
+
+  // values: מה שהוקלד בחורים, לפי הסדר. מחזירה { invalid } / { ok, hint? } כמו בתשובת טקסט.
+  // שגיאת תחביר או שם לא מוגדר לא נספרות. רקורסיה אינסופית ושגיאות ריצה מקבלות הסבר תמיד;
+  // "בקריאה X מחזירה Y במקום Z" רק מהניסיון השני.
+  function checkFill(ex, values, attempt) {
+    const prog = fillProg(ex), blanks = {};
+    const where = k => (ex.sols.length > 1 ? `בחור ${k}: ` : '');
+    for (let k = 1; k <= ex.sols.length; k++) {
+      try { blanks[k] = CS.parseExpr(values[k - 1] || ''); }
+      catch (e) { if (!(e instanceof CS.CSError)) throw e; return { invalid: where(k) + e.message + '.' }; }
+    }
+    try { CS.check(prog, blanks); }
+    catch (e) { if (!(e instanceof CS.CSError)) throw e; return { invalid: (e.blank ? where(e.blank) : '') + e.message + '.' }; }
+    for (const tc of ex.tests) {
+      let r;
+      try { r = run(prog, ex.name, tc.args.map(cloneArg), { blanks, maxSteps: CHECK_STEPS }); }
+      catch (e) {
+        if (!(e instanceof CS.CSError)) throw e;
+        const call = inlineCode(tc.call);
+        if (e.kind === 'stack') return { ok: false, hint: `הרקורסיה לא נעצרת, למשל בקריאה ${call}. בדקו את תנאי העצירה ואת הצעד הרקורסיבי.` };
+        if (e.kind === 'steps') return { ok: false, hint: `הפעולה לא מסתיימת, למשל בקריאה ${call}.` };
+        return { ok: false, hint: `שגיאה בזמן ריצה בקריאה ${call}: ${esc(e.message)}.` };
+      }
+      const same = literal(r.value) === literal(tc.value) && r.out === tc.out;
+      if (same) continue;
+      if (attempt < 2) return { ok: false };
+      const call = inlineCode(tc.call), show = s => (s.trim() ? inlineCode(normOut(s)) : 'כלום');
+      if (ex.ret === 'void') return { ok: false, hint: `בקריאה ${call} הפעולה שלכם מדפיסה ${show(r.out)} במקום ${show(tc.out)}.` };
+      if (literal(r.value) !== literal(tc.value))
+        return { ok: false, hint: `בקריאה ${call} הפעולה שלכם מחזירה ${inlineCode(literal(r.value))} במקום ${inlineCode(literal(tc.value))}.` };
+      return { ok: false, hint: `בקריאה ${call} הפלט שונה מהצפוי.` };
+    }
+    return { ok: true };
+  }
+  const fillShown = ex => (ex.sols.length === 1 ? inlineCode(ex.sols[0])
+    : ex.sols.map((s, i) => `(${i + 1}) ${inlineCode(s)}`).join(' '));
+  function fillSpec(ex) {
+    return { type: 'code', label: ex.sols.length > 1 ? 'השלימו את החורים בקוד ולחצו "בדיקה".' : 'השלימו את החור בקוד ולחצו "בדיקה".',
+      shown: fillShown(ex), check: (values, attempt) => checkFill(ex, values, attempt) };
+  }
+  function fillCodeHtml(ex) {
+    return Core.codeHtml(ex.code, { blank: k => {
+      const w = Math.max(5, ex.sols[k - 1].length + 2);
+      return `<input class="blank" data-b="${k}" type="text" dir="ltr" spellcheck="false" autocapitalize="off" autocomplete="off"`
+        + ` placeholder="${k}" aria-label="חור ${k}" style="width:calc(${w}ch + 14px)">`;
+    } });
+  }
+  function fillSolutionHtml(ex) {
+    const code = Core.codeHtml(ex.code, { blank: k => `<span class="solfill">${esc(ex.sols[k - 1])}</span>` });
+    const rows = ex.tests.slice(0, 8).map(tc => `${esc(tc.call)} <span class="ret">→ ${esc(ex.ret === 'void' ? JSON.stringify(tc.out) : literal(tc.value))}</span>`);
+    return `<p class="muted">מתקבל גם כל ביטוי אחר שנותן את אותן תוצאות בכל הקלטים שנבדקו.</p>${code}`
+      + `<p>חלק מהקלטים שנבדקו${ex.ret === 'void' ? ' (והפלט הצפוי)' : ' (והערך הצפוי)'}:</p><div class="trace" dir="ltr">${rows.join('\n')}</div>`;
+  }
+
+  // ממשק אחיד לשני סוגי התרגילים
+  // כל טענות היציאה מתחילות בפועל ("מקבלת ...") או בשם פעולה, ולכן "הפעולה" לפניהן
+  const introHtml = ex => (ex.mode === 'fill' ? `השלימו את הפעולה ${inlineCode(ex.name)}. הפעולה ${ex.doc}` : '');
+  const partHtml = ex => (ex.mode === 'fill' ? '' : questionHtml(ex));
+  const specOf = ex => (ex.mode === 'fill' ? fillSpec(ex) : answerSpec(ex));
+  const figureHtml = ex => (ex.mode === 'fill' ? fillCodeHtml(ex) : Core.codeHtml(ex.code));
+  const solutionHtml = ex => (ex.mode === 'fill' ? fillSolutionHtml(ex) : traceHtml(ex));
+
   global.Engine = {
-    VERSION, MAX_LEVEL, MAX_ATTEMPTS, LIMITS, TEMPLATES: T, TOPIC_NAMES,
+    VERSION, MAX_LEVEL, MAX_ATTEMPTS, LIMITS, TEMPLATES: T, SPEC, TOPIC_NAMES, BLANKS_BY_LEVEL,
     minLevel, pickTemplate, makeExercise, codeOf, progOf, questionHtml, answerSpec, checkValue, traceHtml, traceLines,
+    solsOf, checkFill, fillSpec, fillCodeHtml, fillSolutionHtml, introHtml, partHtml, specOf, figureHtml, solutionHtml,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
@@ -618,28 +779,34 @@ public static int $F(int[] arr, int lo, int hi)
 (function () {
   'use strict';
   const E = window.Engine, $ = id => document.getElementById(id);
-  const topics = () => [...document.querySelectorAll('input[name=topic]:checked')].map(x => x.value);
+  const checked = name => [...document.querySelectorAll(`input[name=${name}]:checked`)].map(x => x.value);
   // מחרוזות ומערכים מתחילים ברמה 3: אם נבחרו רק הם, הרמה עולה
   function updateNote() {
-    const tp = topics();
+    const tp = checked('topic');
     if (!tp.length) { $('setNote').textContent = 'נא לבחור לפחות נושא אחד.'; return; }
+    if (!checked('mode').length) { $('setNote').textContent = 'נא לבחור לפחות סוג תרגיל אחד.'; return; }
     const min = E.minLevel(tp);
     $('setNote').textContent = +$('level').value < min ? `בנושאים שנבחרו התרגילים מתחילים מרמה ${min}.` : '';
   }
-  document.querySelectorAll('input[name=topic], #level').forEach(el => el.addEventListener('change', updateNote));
+  document.querySelectorAll('input[name=topic], input[name=mode], #level').forEach(el => el.addEventListener('change', updateNote));
   function readSettings() {
-    const tp = topics();
-    if (!tp.length) { updateNote(); return null; }
-    return { level: Math.max(+$('level').value, E.minLevel(tp)), topics: tp };
+    const tp = checked('topic'), modes = checked('mode');
+    if (!tp.length || !modes.length) { updateNote(); return null; }
+    return { level: Math.max(+$('level').value, E.minLevel(tp)), topics: tp, modes };
   }
+  const MODE_NAMES = { trace: 'מעקב', fill: 'השלמת קוד' };
   Core.mountUI({
     engine: E, readSettings, minLevel: s => E.minLevel(s.topics),
-    makeExercise: (s, level, prevKind) => E.makeExercise({ level, topics: s.topics, prevKind }),
-    ctypeHtml: ex => E.TOPIC_NAMES[ex.topic],
-    render: ex => ({ html: Core.codeHtml(ex.code) }),
-    parts: ex => [{ html: E.questionHtml(ex), answers: [E.answerSpec(ex)] }],
-    solution: { title: 'מעקב אחר הקריאות', html: ex => E.traceHtml(ex), onCorrect: true },
-    failSuffix: 'למטה מעקב אחר הקריאות.',
+    makeExercise: (s, level, prevKind) => {
+      const ex = E.makeExercise({ level, topics: s.topics, modes: s.modes, prevKind });
+      ex.html = E.introHtml(ex);
+      return ex;
+    },
+    ctypeHtml: ex => `${MODE_NAMES[ex.mode]} · ${E.TOPIC_NAMES[ex.topic]}`,
+    render: ex => ({ html: E.figureHtml(ex) }),
+    parts: ex => [{ html: E.partHtml(ex), answers: [E.specOf(ex)] }],
+    solution: { title: 'פתרון', html: ex => E.solutionHtml(ex), onCorrect: true },
+    failSuffix: 'למטה הפתרון.',
   });
   updateNote();
 })();

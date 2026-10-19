@@ -107,6 +107,8 @@
    *     answer text:   { type:'text', label, shown (HTML של התשובה הנכונה), width?, check(raw, attempt) }
    *                    check מחזירה { invalid: msg } (לא נספר) או { ok, hint? }
    *     answer choice: { type:'choice', label, short?, options:[{value,label}], value }
+ *     answer code:   { type:'code', label, shown, check(values, attempt) }
+ *                    החורים הם <input class="blank" data-b="1"> בתוך מה ש-render מחזיר; values לפי הסדר של data-b
    *  solution: { title, html(ex, partIndex), onCorrect: true/false }
    *  failSuffix: טקסט אחרי התשובה הנכונה כשמוצג פתרון
    */
@@ -115,7 +117,12 @@
     $('ver').textContent = E.VERSION;
     $('ver2').textContent = E.VERSION;
     $('play').innerHTML = PLAY_HTML;
-    const st = { settings: null, level: 1, ex: null, parts: null, pi: 0, failed: 0, finished: false, prevKind: null, results: [] };
+    // Enter בחור בקוד = בדיקה
+    $('figure').addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' && ev.target.matches('input.blank')) { ev.preventDefault(); $('ansForm').requestSubmit(); }
+    });
+    const blankInputs = () => [...document.querySelectorAll('#figure input.blank')].sort((a, b) => a.dataset.b - b.dataset.b);
+    const st ={ settings: null, level: 1, ex: null, parts: null, pi: 0, failed: 0, finished: false, prevKind: null, results: [] };
     const multi = () => st.parts.length > 1;
 
     $('start').addEventListener('click', () => {
@@ -162,6 +169,7 @@
       $('ptext').hidden = !multi() && !part.html;
       $('ptext').innerHTML = letter + (part.html || '');
       $('ansRows').innerHTML = part.answers.map((a, i) => {
+        if (a.type === 'code') return `<span class="muted">${esc(a.label)}</span>`;
         if (a.type === 'choice')
           return `<label class="ansbox dirbox">${esc(a.label)}: <select data-i="${i}" class="ch"><option value="">בחרו</option>${a.options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select></label>`;
         return `<label class="ansbox">${esc(a.label)}:
@@ -183,7 +191,7 @@
     }
     function setFeedback(cls, html) { $('feedback').className = 'fb ' + cls; $('feedback').innerHTML = html; }
     function lockPart() {
-      document.querySelectorAll('#ansRows input, #ansRows select').forEach(el => (el.disabled = true));
+      document.querySelectorAll('#ansRows input, #ansRows select, #figure input.blank').forEach(el => (el.disabled = true));
       $('checkBtn').disabled = true;
     }
     // סעיף הסתיים (נכון או אחרי 3 ניסיונות)
@@ -242,6 +250,7 @@
           const v = document.querySelector(`#ansRows select.ch[data-i="${i}"]`).value;
           return v ? { ok: v === a.value } : { invalid: 'נא לבחור מהרשימה.' };
         }
+        if (a.type === 'code') return a.check(blankInputs().map(x => x.value), attempt);
         return a.check(document.querySelector(`#ansRows input[data-i="${i}"]`).value, attempt);
       });
       const bad = res.find(r => r.invalid);
@@ -249,7 +258,8 @@
       const last = st.pi === st.parts.length - 1;
       const answerText = partAnswerText(part);
       if (res.every(r => r.ok)) {
-        let msg = `נכון! ${answerText}. `;
+        // בהשלמת קוד התלמיד יכול לכתוב ביטוי אחר מהפתרון לדוגמה, ולכן לא מציגים אותו כאן
+        let msg = part.answers.every(a => a.type === 'code') ? 'נכון! ' : `נכון! ${answerText}. `;
         if (last) {
           // ההמלצה לפי כל הסעיפים: כולם נכונים, ובאיזה ניסיון לכל היותר
           const all = st.results.every(r => r.correct), maxAttempt = Math.max(attempt, ...st.results.map(r => r.attempt));

@@ -75,8 +75,17 @@ pre.code .nu { color: #098658; }
 pre.code .cm { color: #6a737d; font-style: italic; }
 pre.code .fn { color: #795e26; }
 
+/* חורים בקוד */
+pre.code input.blank { font: inherit; padding: 1px 6px; margin: 1px 0; border: 1.5px solid #8fb8b3; border-radius: 6px;
+                       background: #f3fbfa; color: var(--fg); vertical-align: baseline; max-width: 60vw; }
+pre.code input.blank:focus { outline: 2px solid var(--accent); outline-offset: 0; background: #fff; }
+pre.code input.blank::placeholder { color: #9fb7b4; }
+pre.code input.blank:disabled { background: #f1f3f6; border-color: var(--line); }
+pre.code .solfill { background: var(--ok-soft); color: var(--ok); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+
 @media (max-width: 480px) {
   pre.code { font-size: 13.5px; }
+  pre.code input.blank { font-size: 16px; }
   pre.code .cl::before { width: 1.6em; margin-right: 8px; padding-right: 6px; }
 }
 
